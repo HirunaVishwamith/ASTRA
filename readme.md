@@ -40,8 +40,8 @@ Ensure you have Python 3.10+ installed. To maintain performance, the only requir
 
 ```bash
 # Clone the repository
-git clone [https://github.com/yourusername/constellation-router.git](https://github.com/yourusername/constellation-router.git)
-cd constellation-router
+git clone https://github.com/HirunaVishwamith/ASTRA.git
+cd ASTRA
 
 # Create a virtual environment and install requirements
 python -m venv venv
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 To launch the real-time Earth-Centered Inertial (ECI) simulation with the interactive telemetry dashboard:
 
 ```bash
-python run_simulation.py --planes 10 --sats_per_plane 10 --interactive
+python main.py --planes 10 --sats_per_plane 10 --interactive
 
 ```
 
@@ -79,6 +79,6 @@ The repository is structured to separate the physical constraints from the agent
 
 If you wish to contribute, specifically in porting the $O(N^2)$ Line-of-Sight distance calculations to a **custom CUDA kernel** via Numba/C++, please submit a pull request.
 
-## ⚖️ License
+## License
 
 Copyright © 2024. Licensed under the MIT License. See `LICENSE` for details.
