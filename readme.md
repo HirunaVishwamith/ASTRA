@@ -16,9 +16,11 @@ ASTRA is designed from first principles with a strong focus on transparency, ext
 
 You may only use this repository for high-performance computing (HPC) research and autonomous system validation. Use is subject to the standard open-source [terms of use](LICENSE).
 
-<div align="center">
+<!-- <div align="center">
   <img src="https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1200&auto=format&fit=crop" alt="Constellation Banner" width="100%" style="border-radius: 10px;">
-</div>
+</div> -->
+
+![ASTRA Interface](img/interface.png)
 
 <br>
 
