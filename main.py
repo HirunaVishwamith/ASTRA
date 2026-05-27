@@ -9,6 +9,19 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
                              QSplitter, QGroupBox, QSlider)
 
 import pyqtgraph.opengl as gl
+from orbit import (
+    OrbitalElements,
+    CartesianState,
+    coe_to_rv,
+    rv_to_coe,
+    propagate_kepler_universal,
+    eci_to_ecef,
+    ecef_to_geodetic_spherical,
+)
+from network_model import NetworkGraph, build_topology
+from routing import DijkstraRouter, DistanceVectorRouter, Router
+from traffic import TrafficGenerator, TrafficSimulator
+from failures import FailureModel, LinkImpairments
 
 # --- Realistic Physical Constants ---
 EARTH_RADIUS_KM = 6378.137 
@@ -23,6 +36,12 @@ NUM_PLANES = 10
 NUM_SATS_PER_PLANE = 10
 NUM_TOTAL_SATS = NUM_PLANES * NUM_SATS_PER_PLANE
 INCLINATION_RAD = math.radians(53.0) 
+
+# --- Network/Traffic Defaults ---
+ROUTING_MODE = "distance_vector"  # "distance_vector" | "dijkstra"
+ROUTING_COST = "hops"  # "hops" | "latency"
+TRAFFIC_PATTERN = "uniform"  # "uniform" | "hotspot" | "burst"
+TRAFFIC_RATE_PPS = 3.0
 
 # --- Professional Dark Theme (QSS) ---
 DARK_THEME = """
@@ -47,61 +66,50 @@ class SatelliteAgent:
         self.name = f"SAT-{orbit_plane_idx:02d}-{node_id % NUM_SATS_PER_PLANE:02d}"
         self.plane_idx = orbit_plane_idx
         
-        self.nu_rad = phase_offset_rad 
-        self.omega = math.sqrt(MU_EARTH / SAT_ALTITUDE_KM**3) 
-        self.RAAN_rad = (2 * math.pi / NUM_PLANES) * self.plane_idx 
+        # --- Orbital State (ECI) ---
+        # Keep v1 simple but physically meaningful: near-circular LEO shells, 2-body dynamics.
+        self.RAAN_rad = (2 * math.pi / NUM_PLANES) * self.plane_idx
         self.inclination = INCLINATION_RAD
+        self.argp_rad = 0.0
+        # Small eccentricity helps avoid perfectly rigid "ring" behavior while staying simple.
+        self.ecc = 0.001
+        self.a_km = float(SAT_ALTITUDE_KM)
+        self.nu_rad = float(phase_offset_rad)
+
+        self.coe = OrbitalElements(
+            a_km=self.a_km,
+            e=self.ecc,
+            i_rad=self.inclination,
+            raan_rad=self.RAAN_rad,
+            argp_rad=self.argp_rad,
+            nu_rad=self.nu_rad,
+        )
+        self.state = coe_to_rv(MU_EARTH, self.coe)
         
         self.pos_3d = np.zeros(3)
+        self.vel_eci_km_s = np.zeros(3)
         self.is_active = True
-        self.neighbors = [] 
-        self.routing_table = {self.node_id: (0, self.node_id)} 
-        self.table_changed = True 
+        self.neighbors = []  # populated by network layer each step
+
+        self._sync_render_state()
+
+    def _sync_render_state(self):
+        # UI uses a 1/1000 scaling so Earth radius (~6378 km) becomes ~6.4 units.
+        self.pos_3d = self.state.r_km / 1000.0
+        self.vel_eci_km_s = self.state.v_km_s.copy()
+        # Keep nu_rad updated for existing UI fields.
+        try:
+            self.coe = rv_to_coe(MU_EARTH, self.state.r_km, self.state.v_km_s)
+            self.nu_rad = self.coe.nu_rad
+        except Exception:
+            # For numerical edge cases, don't crash the UI loop.
+            pass
 
     def update_physics(self, dt_seconds):
         if not self.is_active: return
-        self.nu_rad += self.omega * dt_seconds
-        
-        r = SAT_ALTITUDE_KM
-        Om = self.RAAN_rad
-        inc = self.inclination
-        nu = self.nu_rad
-        
-        x = r * (math.cos(Om) * math.cos(nu) - math.sin(Om) * math.sin(nu) * math.cos(inc))
-        y = r * (math.sin(Om) * math.cos(nu) + math.cos(Om) * math.sin(nu) * math.cos(inc))
-        z = r * (math.sin(nu) * math.sin(inc))
-        
-        self.pos_3d = np.array([x, y, z]) / 1000.0
-
-    def broadcast_table(self):
-        if not self.is_active or not self.table_changed: return None
-        self.table_changed = False
-        return self.routing_table
-
-    def process_neighbor_update(self, neighbor_id, neighbor_table):
-        if not self.is_active: return
-        updated = False
-        link_cost = 1 
-        
-        to_delete = [dst for dst, (cost, n_hop) in self.routing_table.items() if n_hop == neighbor_id]
-        for dst in to_delete:
-            del self.routing_table[dst]
-            updated = True
-            
-        self.routing_table[self.node_id] = (0, self.node_id)
-
-        for dest_id, (neighbor_cost, _) in neighbor_table.items():
-            current_path = self.routing_table.get(dest_id)
-            if current_path and current_path[0] <= neighbor_cost + link_cost: continue
-            self.routing_table[dest_id] = (neighbor_cost + link_cost, neighbor_id)
-            updated = True
-            
-        if updated: self.table_changed = True
-
-    def get_next_hop(self, dest_id):
-        if not self.is_active: return None
-        path = self.routing_table.get(dest_id)
-        return path[1] if path else None
+        r, v = propagate_kepler_universal(MU_EARTH, self.state.r_km, self.state.v_km_s, float(dt_seconds))
+        self.state = CartesianState(r_km=r, v_km_s=v)
+        self._sync_render_state()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -122,10 +130,29 @@ class MainWindow(QMainWindow):
         self.step_count = 0
         self.selected_sat_id = None
         self.status_msg = "NOMINAL"
+        self.last_sim_time_s = 0.0
         
         # Dynamic Parameters
         self.sim_dt_seconds = 5.0
         self.strike_severity = 0.20
+
+        # --- Network / Routing / Traffic ---
+        self.graph = NetworkGraph()
+        self.router: Router = self._make_router()
+        self.traffic = TrafficSimulator(
+            TrafficGenerator(pattern=TRAFFIC_PATTERN, rate_pps=TRAFFIC_RATE_PPS, hotspot_id=self.trace_dst)
+        )
+        self.last_traffic_stats = None
+
+        # Failure/impairment knobs (expose in UI later if needed)
+        self.failure_model = FailureModel(
+            LinkImpairments(
+                blackout_prob_per_s=0.0000,
+                latency_spike_prob_per_s=0.0000,
+                latency_spike_add_s=0.030,
+                loss_multiplier=1.0,
+            )
+        )
 
         self.setup_ui()
         self.init_gl_objects()
@@ -133,6 +160,11 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_simulation)
         self.timer.start(16) 
+
+    def _make_router(self) -> Router:
+        if ROUTING_MODE == "dijkstra":
+            return DijkstraRouter(weight=ROUTING_COST)
+        return DistanceVectorRouter(cost=ROUTING_COST, rounds_per_step=3)
 
     def setup_ui(self):
         main_widget = QWidget()
@@ -276,50 +308,70 @@ class MainWindow(QMainWindow):
         for sat in self.sats:
             if sat.node_id in doomed_ids:
                 sat.is_active = False
-                sat.routing_table = {}
-                
-        for sat in self.sats: 
-            if sat.is_active: sat.routing_table = {sat.node_id: (0, sat.node_id)}
+        # Routing/traffic will adapt automatically on next step.
 
     def reset_network(self):
         self.status_msg = "NOMINAL"
         for sat in self.sats:
             sat.is_active = True
-            sat.routing_table = {sat.node_id: (0, sat.node_id)}
-            sat.table_changed = True
+        # Reset router + traffic state for a clean run
+        self.router = self._make_router()
+        self.traffic = TrafficSimulator(
+            TrafficGenerator(pattern=TRAFFIC_PATTERN, rate_pps=TRAFFIC_RATE_PPS, hotspot_id=self.trace_dst)
+        )
 
     def update_simulation(self):
         self.step_count += 1
         sim_time_s = self.step_count * self.sim_dt_seconds
+        dt_s = float(self.sim_dt_seconds)
+        self.last_sim_time_s = sim_time_s
         
-        for sat in self.sats: sat.update_physics(self.sim_dt_seconds)
+        # 1) Physics propagate (ECI states)
+        for sat in self.sats:
+            sat.update_physics(dt_s)
             
+        # 2) Build network graph (LOS + range) with link properties
         active_sats = [s for s in self.sats if s.is_active]
-        for s in active_sats: s.neighbors = []
-        
+        active_ids = [s.node_id for s in active_sats]
+        r_eci_by_id = {s.node_id: s.state.r_km for s in active_sats}
+        build_topology(
+            self.graph,
+            active_ids=active_ids,
+            r_eci_by_id=r_eci_by_id,
+            earth_radius_km=EARTH_RADIUS_KM,
+            max_range_km=MAX_LINK_RANGE_KM,
+            clearance_km=0.0,
+            base_bandwidth_mbps=2000.0,
+            base_loss_prob=0.0005,
+            extra_latency_s=0.001,
+        )
+
+        # 3) Apply failure/impairment models (blackouts, spikes, loss scaling)
+        self.failure_model.apply(self.graph, dt_s=dt_s)
+
+        # 4) Routing step (modular)
+        self.router.step(self.graph, active_ids)
+
+        # 5) Traffic step (packets + metrics)
+        self.last_traffic_stats = self.traffic.step(
+            graph=self.graph,
+            router=self.router,
+            active_ids=active_ids,
+            now_t=sim_time_s,
+            dt_s=dt_s,
+        )
+
+        # 6) Populate neighbor lists for inspector convenience
+        for s in self.sats:
+            s.neighbors = []
+        for u in active_ids:
+            self.sats[u].neighbors = list(self.graph.neighbors(u).keys())
+
+        # 7) Render links from graph edges
         link_coords = []
-        for i in range(len(active_sats)):
-            for j in range(i + 1, len(active_sats)):
-                sat_a = active_sats[i]
-                sat_b = active_sats[j]
-                dist = np.linalg.norm(sat_a.pos_3d - sat_b.pos_3d) * 1000.0
-                if dist <= MAX_LINK_RANGE_KM:
-                    sat_a.neighbors.append(sat_b.node_id)
-                    sat_b.neighbors.append(sat_a.node_id)
-                    link_coords.append(sat_a.pos_3d)
-                    link_coords.append(sat_b.pos_3d)
-
-        for _ in range(3):
-            all_broadcasts = {}
-            for s in active_sats:
-                table = s.broadcast_table()
-                if table is not None:
-                    all_broadcasts[s.node_id] = table
-
-            for sat in active_sats:
-                for n_id in sat.neighbors:
-                    if n_id in all_broadcasts and all_broadcasts[n_id] is not None:
-                        sat.process_neighbor_update(n_id, all_broadcasts[n_id])
+        for u, v, _link in self.graph.edges():
+            link_coords.append(self.sats[u].pos_3d)
+            link_coords.append(self.sats[v].pos_3d)
 
         active_pts = np.array([s.pos_3d for s in self.sats if s.is_active])
         dead_pts = np.array([s.pos_3d for s in self.sats if not s.is_active])
@@ -334,28 +386,31 @@ class MainWindow(QMainWindow):
         else: self.gl_network_links.setData(pos=np.empty((0,3)))
 
         path_trace = []
-        if self.sats[self.trace_src].is_active:
-            path_trace = [self.trace_src]
-            curr = self.trace_src
-            visited = {curr}
-            while curr != self.trace_dst:
-                nxt = self.sats[curr].get_next_hop(self.trace_dst)
-                if nxt is None or nxt in visited: break
-                path_trace.append(nxt)
-                visited.add(nxt)
-                curr = nxt
+        if 0 <= self.trace_src < len(self.sats) and 0 <= self.trace_dst < len(self.sats):
+            if self.sats[self.trace_src].is_active and self.sats[self.trace_dst].is_active:
+                path_trace = self.router.path(self.trace_src, self.trace_dst, max_hops=256)
                 
         if len(path_trace) > 1: self.gl_packet_path.setData(pos=np.array([self.sats[pid].pos_3d for pid in path_trace]))
         else: self.gl_packet_path.setData(pos=np.empty((0,3)))
 
         # Update Text
         color_hex = "#ff7b72" if "CRITICAL" in self.status_msg else "#3fb950"
+        if self.last_traffic_stats is not None:
+            t = self.last_traffic_stats
+            traffic_html = (
+                f"<b>Traffic:</b> in-flight={t.in_flight}, delivered={t.delivered}, dropped={t.dropped}<br>"
+                f"<b>Avg Delay:</b> {t.avg_delay_s:.3f} s &nbsp;&nbsp; <b>Avg Hops:</b> {t.avg_hops:.2f}<br>"
+                f"<b>Routing:</b> {self.router.name} ({ROUTING_COST})<br><br>"
+            )
+        else:
+            traffic_html = ""
         self.lbl_telemetry.setText(
             f"<b>GLOBAL TELEMETRY</b><br><br>"
             f"<b>Time Elapsed :</b> T+ {sim_time_s:.1f} s<br>"
             f"<b>Net Status   :</b> <span style='color:{color_hex}'>{self.status_msg}</span><br>"
             f"<b>Active Nodes :</b> {len(active_pts)} / {NUM_TOTAL_SATS}<br>"
             f"<b>Laser Links  :</b> {len(link_coords)//2}<br><br>"
+            f"{traffic_html}"
             f"<b>Active Tracer:</b><br>Targeting node {self.trace_dst} from {self.trace_src}"
         )
         
@@ -365,15 +420,35 @@ class MainWindow(QMainWindow):
             
             s_color = "#3fb950" if sat.is_active else "#da3633"
             s_text = "ONLINE" if sat.is_active else "OFFLINE"
+            try:
+                coe = sat.coe
+                a_km = coe.a_km
+                e = coe.e
+                inc_deg = math.degrees(coe.i_rad)
+                raan_deg = math.degrees(coe.raan_rad)
+            except Exception:
+                a_km, e, inc_deg, raan_deg = float("nan"), float("nan"), float("nan"), float("nan")
+            try:
+                r_ecef = eci_to_ecef(sat.state.r_km, sim_time_s, theta0_rad=0.0)
+                lat_rad, lon_rad, rmag_km = ecef_to_geodetic_spherical(r_ecef)
+                lat_deg = math.degrees(lat_rad)
+                lon_deg = (math.degrees(lon_rad) + 540.0) % 360.0 - 180.0
+                alt_km = rmag_km - EARTH_RADIUS_KM
+            except Exception:
+                lat_deg, lon_deg, alt_km = float("nan"), float("nan"), float("nan")
             self.lbl_spec.setText(
                 f"<span style='color:#58a6ff; font-weight:bold;'>{sat.name}</span><br><hr>"
                 f"<b>Status:</b> <span style='color:{s_color};'>{s_text}</span><br>"
                 f"<b>Plane ID:</b> {sat.plane_idx}<br>"
+                f"<b>Orbit:</b> a={a_km:.1f} km, e={e:.4f}, i={inc_deg:.1f}°, Ω={raan_deg:.1f}°<br>"
                 f"<b>True Anomaly:</b> {sat.nu_rad:.2f} rad<br>"
+                f"<b>Subpoint (lat/lon/alt):</b> {lat_deg:.2f}°, {lon_deg:.2f}°, {alt_km:.1f} km<br>"
                 f"<b>Neighbors:</b> {len(sat.neighbors)} connected<br>"
-                f"<b>Routing Db:</b> {len(sat.routing_table)} known paths<br><br>"
-                f"<b>Vector (ECI X/Y/Z):</b><br>"
-                f"[{sat.pos_3d[0]*1000:.1f}, {sat.pos_3d[1]*1000:.1f}, {sat.pos_3d[2]*1000:.1f}] km"
+                f"<b>Routing:</b> {self.router.name} ({ROUTING_COST})<br><br>"
+                f"<b>ECI Position (km):</b><br>"
+                f"[{sat.pos_3d[0]*1000:.1f}, {sat.pos_3d[1]*1000:.1f}, {sat.pos_3d[2]*1000:.1f}]<br><br>"
+                f"<b>ECI Velocity (km/s):</b><br>"
+                f"[{sat.vel_eci_km_s[0]:.3f}, {sat.vel_eci_km_s[1]:.3f}, {sat.vel_eci_km_s[2]:.3f}]"
             )
 
 if __name__ == '__main__':

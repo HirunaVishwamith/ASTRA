@@ -1,20 +1,14 @@
-# ASTRA - Autonomous Satellite Traffic and Routing Architecture
+# ASTRA — Autonomous Satellite Traffic & Routing Architecture
 
+ASTRA is a research-oriented satellite constellation simulator focused on **dynamic topology**, **routing**, and **traffic performance** in LEO networks.
 
-ASTRA (Autonomous Satellite Traffic and Routing Architecture) is a research-oriented simulation framework for evaluating routing algorithms and distributed decision-making in Low Earth Orbit (LEO) satellite constellations.
-
-The platform models satellites as autonomous agents operating in a dynamic orbital environment, enabling the study of:
-
-- Inter-satellite communication networks
-- Distributed routing protocols
-- Constellation-scale traffic engineering
-- Autonomous network recovery
-- Multi-agent coordination and consensus
-- Resilient space-based communication architectures
-
-ASTRA is designed from first principles with a strong focus on transparency, extensibility, and performance
-
-You may only use this repository for high-performance computing (HPC) research and autonomous system validation. Use is subject to the standard open-source [terms of use](LICENSE).
+It combines:
+- **Real orbital propagation (2-body Kepler)** in ECI
+- **Physics-valid ISLs** (range + Earth line-of-sight occlusion)
+- A clean **network graph** model with link **latency / bandwidth / loss**
+- Pluggable **routing algorithms** (Dijkstra + Distance-Vector)
+- **Traffic generation** + metrics (delivery ratio, delay, hops, drops)
+- Failure/impairment hooks (blackouts, latency spikes, loss scaling) + node strikes
 
 <!-- <div align="center">
   <img src="https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1200&auto=format&fit=crop" alt="Constellation Banner" width="100%" style="border-radius: 10px;">
@@ -27,59 +21,59 @@ You may only use this repository for high-performance computing (HPC) research a
 
 ## Key Capabilities
 
-Unlike standard network simulators, this environment is built entirely from scratch utilizing pure Python and core mathematical libraries to ensure zero framework bloat and maximum deterministic control:
+* **Orbital physics**: ECI Cartesian state (\(r,v\)) propagated with a universal-variables Kepler solver (`orbit.py`).
+* **Earth rotation (ECI→ECEF)**: enables ground-relative satellite subpoint (lat/lon/alt) in the inspector.
+* **Clean network model**: topology is recomputed from physics and stored as a graph (`network_model.py`).
+* **Link properties**: each ISL has latency (distance/\(c\)), bandwidth (Mbps), and loss probability.
+* **Routing is modular** (`routing.py`):
+  - Dijkstra shortest path (centralized per-step)
+  - Distance-Vector (distributed-style, iterative per-step)
+* **Traffic simulation** (`traffic.py`): uniform / hotspot / burst patterns; delivery + delay + hop metrics.
+* **Failure scenarios** (`failures.py`): link blackouts, latency spikes, loss scaling; plus node failures via the UI strike.
 
-* **Real-Time 3D ECI Physics Engine:** Transforms true anomaly, inclination, and Right Ascension of the Ascending Node (RAAN) into high-fidelity Cartesian 3D coordinates.
-* **Decentralized Agent Consensus:** Each satellite acts as an independent agent running a dynamic, distributed distance-vector routing algorithm, sharing state only with local Line-of-Sight (LoS) neighbors.
-* **Catastrophic Failure Recovery:** Agents autonomously detect dead links and re-converge routing tables within milliseconds of a simulated kinetic strike, without relying on a centralized ground map.
-* **Walker Delta Topology:** Accurately models a multi-plane, phase-shifted orbital geometry identical to modern mega-constellations.
+## Installation & Usage
 
-##  Installation & Usage
-
-Ensure you have Python 3.10+ installed. To maintain performance, the only required external dependency is `numpy` for matrix operations and `matplotlib` for the 3D telemetry visualization.
-
-
+### Requirements
+- Python **3.10+**
+- `numpy`
+- `PyQt6`
+- `pyqtgraph`
 
 ```bash
-# Clone the repository
-git clone https://github.com/HirunaVishwamith/ASTRA.git
-cd ASTRA
-
-# Create a virtual environment and install requirements
 python -m venv venv
-source venv/bin/activate  # On Windows use `venv\\Scripts\\activate`
-pip install -r requirements.txt
-
+venv\Scripts\activate   # Windows PowerShell
+pip install numpy PyQt6 pyqtgraph
 ```
 
-### Running the 3D Telemetry Dashboard
-
-To launch the real-time Earth-Centered Inertial (ECI) simulation with the interactive telemetry dashboard:
+### Run
+From the repository folder:
 
 ```bash
-python main.py --planes 10 --sats_per_plane 10 --interactive
-
+python main.py
 ```
 
-### Simulating a Kinetic Strike
+Or use the convenience launcher (more robust imports):
 
-During the interactive simulation, you can manually trigger a massive topology shift to observe the network's autonomous self-healing capabilities:
+```bash
+python run.py
+```
 
-1. Click the **"Trigger Kinetic Strike"** button in the UI.
-2. Watch as 20% of the active nodes are destroyed.
-3. Observe the `[TELEMETRY]` readouts as agents locally invalidate dead paths and re-establish the packet trace route `Sat A -> Sat B` around the debris field.
+### Simulating failure / recovery
+Use the UI:
+- **EXECUTE STRIKE**: disables a percentage of nodes (routing + traffic adapt automatically).
+- **SYSTEM REBOOT**: resets nodes and restarts router + traffic state.
 
-## System Architecture
+## Project structure (current)
+- `main.py`: PyQt6 + pyqtgraph UI + simulation loop orchestration
+- `orbit.py`: orbital mechanics (COE/state conversion, propagation, ECI→ECEF, LOS)
+- `network_model.py`: topology graph and per-link properties
+- `routing.py`: routing interface + Dijkstra + Distance-Vector
+- `traffic.py`: packet generation, forwarding, and metrics
+- `failures.py`: impairments (blackout, latency spikes, loss multiplier)
+- `run.py`: launcher
 
-The repository is structured to separate the physical constraints from the agent logic:
-
-* `core/physics.py`: Contains the `MU_EARTH`, `G_CONST`, and the Keplerian-to-Cartesian $O(N^2)$ transformation models. *(Note: Targeted for future CUDA acceleration)*.
-* `agents/router.py`: Contains the `SatelliteAgent` class and the autonomous `process_neighbor_update()` consensus logic.
-* `viz/dashboard_3d.py`: The `matplotlib` real-time visualization interface featuring bypassing of generic auto-scaling for guaranteed stability.
-
-## Contributing
-
-If you wish to contribute, specifically in porting the $O(N^2)$ Line-of-Sight distance calculations to a **custom CUDA kernel** via Numba/C++, please submit a pull request.
+## Notes
+- This is a **research simulator**: the models are intentionally simple and modular so you can swap pieces (e.g., add ground stations, queueing, link budgets, GMST).
 
 ## License
 
