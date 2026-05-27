@@ -14,7 +14,7 @@ It combines:
   <img src="https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1200&auto=format&fit=crop" alt="Constellation Banner" width="100%" style="border-radius: 10px;">
 </div> -->
 
-![ASTRA Interface](img/interface2.png)
+![ASTRA Interface](img/interface3.png)
 
 <br>
 

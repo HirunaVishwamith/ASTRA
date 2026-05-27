@@ -4,7 +4,7 @@ import random
 import numpy as np
 
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QImage, QColor
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QLabel, QListWidget, 
                              QSplitter, QGroupBox, QSlider)
@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
         self.lbl_telemetry.setStyleSheet("font-family: 'Consolas', monospace; font-size: 13px; color: #3fb950; background-color: #010409; padding: 15px; border: 1px solid #30363d; border-radius: 6px;")
         right_layout.addWidget(self.lbl_telemetry)
 
-        # # 1b. Earth texture reference (external image)
+        # 1b. Earth texture reference (external image)
         # earth_group = QGroupBox("EARTH REFERENCE")
         # earth_layout = QVBoxLayout()
         # self.lbl_earth_img = QLabel()
@@ -346,59 +346,59 @@ class MainWindow(QMainWindow):
         inspector_group.setLayout(inspector_layout)
         right_layout.addWidget(inspector_group)
 
-        # 4. Live topology panel (2D)
+        # # 4. Live topology panel (2D)
         topo_group = QGroupBox("LIVE TOPOLOGY (LAT/LON)")
         topo_layout = QVBoxLayout()
-        self.topo_plot = pg.PlotWidget()
-        self.topo_plot.setBackground('#010409')
-        self.topo_plot.showGrid(x=True, y=True, alpha=0.2)
-        self.topo_plot.setLabel('bottom', 'Longitude (deg)')
-        self.topo_plot.setLabel('left', 'Latitude (deg)')
-        self.topo_plot.setXRange(-180, 180)
-        self.topo_plot.setYRange(-90, 90)
+        # self.topo_plot = pg.PlotWidget()
+        # self.topo_plot.setBackground('#010409')
+        # self.topo_plot.showGrid(x=True, y=True, alpha=0.2)
+        # self.topo_plot.setLabel('bottom', 'Longitude (deg)')
+        # self.topo_plot.setLabel('left', 'Latitude (deg)')
+        # self.topo_plot.setXRange(-180, 180)
+        # self.topo_plot.setYRange(-90, 90)
         self.topo_edges_item = pg.PlotDataItem(pen=pg.mkPen((80, 120, 200, 70), width=1))
         self.topo_failed_item = pg.PlotDataItem(pen=pg.mkPen((220, 60, 60, 180), width=2))
         self.topo_route_item = pg.PlotDataItem(pen=pg.mkPen((255, 200, 40, 220), width=3))
         self.topo_nodes_item = pg.ScatterPlotItem(size=6, brush=pg.mkBrush(60, 180, 80, 220), pen=None)
         self.topo_ground_item = pg.ScatterPlotItem(size=8, brush=pg.mkBrush(120, 160, 255, 230), pen=None)
-        self.topo_plot.addItem(self.topo_edges_item)
-        self.topo_plot.addItem(self.topo_failed_item)
-        self.topo_plot.addItem(self.topo_route_item)
-        self.topo_plot.addItem(self.topo_nodes_item)
-        self.topo_plot.addItem(self.topo_ground_item)
-        topo_layout.addWidget(self.topo_plot)
+        # self.topo_plot.addItem(self.topo_edges_item)
+        # self.topo_plot.addItem(self.topo_failed_item)
+        # self.topo_plot.addItem(self.topo_route_item)
+        # self.topo_plot.addItem(self.topo_nodes_item)
+        # self.topo_plot.addItem(self.topo_ground_item)
+        # topo_layout.addWidget(self.topo_plot)
         topo_group.setLayout(topo_layout)
         right_layout.addWidget(topo_group)
 
-        # 5. Metrics-over-time plots
-        metrics_group = QGroupBox("METRICS OVER TIME")
-        metrics_layout = QVBoxLayout()
-        self.plot_delivery = pg.PlotWidget()
-        self.plot_delivery.setBackground('#010409')
-        self.plot_delivery.setMaximumHeight(110)
-        self.plot_delivery.showGrid(x=True, y=True, alpha=0.2)
-        self.plot_delivery.setLabel('left', 'Delivery %')
-        self.curve_delivery = self.plot_delivery.plot(pen=pg.mkPen((80, 200, 120), width=2))
-        metrics_layout.addWidget(self.plot_delivery)
+        # # 5. Metrics-over-time plots
+        # metrics_group = QGroupBox("METRICS OVER TIME")
+        # metrics_layout = QVBoxLayout()
+        # self.plot_delivery = pg.PlotWidget()
+        # self.plot_delivery.setBackground('#010409')
+        # self.plot_delivery.setMaximumHeight(110)
+        # self.plot_delivery.showGrid(x=True, y=True, alpha=0.2)
+        # self.plot_delivery.setLabel('left', 'Delivery %')
+        # self.curve_delivery = self.plot_delivery.plot(pen=pg.mkPen((80, 200, 120), width=2))
+        # metrics_layout.addWidget(self.plot_delivery)
 
-        self.plot_delay = pg.PlotWidget()
-        self.plot_delay.setBackground('#010409')
-        self.plot_delay.setMaximumHeight(110)
-        self.plot_delay.showGrid(x=True, y=True, alpha=0.2)
-        self.plot_delay.setLabel('left', 'Delay (s)')
-        self.curve_delay = self.plot_delay.plot(pen=pg.mkPen((120, 160, 255), width=2))
-        metrics_layout.addWidget(self.plot_delay)
+        # self.plot_delay = pg.PlotWidget()
+        # self.plot_delay.setBackground('#010409')
+        # self.plot_delay.setMaximumHeight(110)
+        # self.plot_delay.showGrid(x=True, y=True, alpha=0.2)
+        # self.plot_delay.setLabel('left', 'Delay (s)')
+        # self.curve_delay = self.plot_delay.plot(pen=pg.mkPen((120, 160, 255), width=2))
+        # metrics_layout.addWidget(self.plot_delay)
 
-        self.plot_util = pg.PlotWidget()
-        self.plot_util.setBackground('#010409')
-        self.plot_util.setMaximumHeight(110)
-        self.plot_util.showGrid(x=True, y=True, alpha=0.2)
-        self.plot_util.setLabel('left', 'Util %')
-        self.curve_util = self.plot_util.plot(pen=pg.mkPen((255, 200, 40), width=2))
-        metrics_layout.addWidget(self.plot_util)
+        # self.plot_util = pg.PlotWidget()
+        # self.plot_util.setBackground('#010409')
+        # self.plot_util.setMaximumHeight(110)
+        # self.plot_util.showGrid(x=True, y=True, alpha=0.2)
+        # self.plot_util.setLabel('left', 'Util %')
+        # self.curve_util = self.plot_util.plot(pen=pg.mkPen((255, 200, 40), width=2))
+        # metrics_layout.addWidget(self.plot_util)
 
-        metrics_group.setLayout(metrics_layout)
-        right_layout.addWidget(metrics_group)
+        # metrics_group.setLayout(metrics_layout)
+        # right_layout.addWidget(metrics_group)
         
         splitter.addWidget(right_container)
         splitter.setSizes([1100, 500])
@@ -476,42 +476,54 @@ class MainWindow(QMainWindow):
 
     def init_gl_objects(self):
         earth_rad_scaled = EARTH_RADIUS_KM / 1000.0
-        md = gl.MeshData.sphere(rows=60, cols=60, radius=earth_rad_scaled)
+        md = gl.MeshData.sphere(rows=900, cols=900, radius=earth_rad_scaled)
 
         # Procedural "texture" for orientation (no external assets needed)
         verts = md.vertexes()
         colors = np.zeros((verts.shape[0], 4), dtype=float)
-        for i, (x, y, z) in enumerate(verts):
-            r = math.sqrt(x * x + y * y + z * z) + 1e-12
-            lat = math.asin(z / r)
-            lon = math.atan2(y, x)
-            lat_d = math.degrees(lat)
+        tex_img = QImage(EARTH_TEXTURE_PATH)
+        if not tex_img.isNull():
+            tw, th = tex_img.width(), tex_img.height()
+            for i, (x, y, z) in enumerate(verts):
+                r = math.sqrt(x*x + y*y + z*z) + 1e-12
+                lat = math.asin(max(-1.0, min(1.0, z / r)))
+                lon = math.atan2(y, x)
+                u = int((lon / (2 * math.pi) + 0.5) * (tw - 1)) % tw
+                v = int((0.5 - lat / math.pi) * (th - 1)) % th
+                c = QColor(tex_img.pixel(u, v))
+                colors[i] = [c.redF(), c.greenF(), c.blueF(), 0.95]
+        else:
+            for i, (x, y, z) in enumerate(verts):
+                r = math.sqrt(x * x + y * y + z * z) + 1e-12
+                lat = math.asin(z / r)
+                lon = math.atan2(y, x)
+                lat_d = math.degrees(lat)
 
-            # Polar caps
-            if abs(lat_d) > 70:
-                col = (0.95, 0.97, 1.0, 0.95)
-            else:
-                # Deterministic pseudo-land mask from trig "noise"
-                n = (
-                    math.sin(3.0 * lon)
-                    + 0.6 * math.sin(2.0 * lat)
-                    + 0.4 * math.sin(5.0 * (lon + lat))
-                    + 0.2 * math.sin(11.0 * lon + 3.0 * lat)
-                )
-                if n > 0.35:
-                    # land
-                    col = (0.15, 0.45, 0.22, 0.95)
-                    # deserts band
-                    if abs(lat_d) < 25 and n > 0.75:
-                        col = (0.62, 0.52, 0.28, 0.95)
+                # Polar caps
+                if abs(lat_d) > 70:
+                    col = (0.95, 0.97, 1.0, 0.95)
                 else:
-                    # ocean
-                    col = (0.05, 0.12, 0.28, 0.92)
-                    # shallow water near "coasts"
-                    if 0.25 < n < 0.35:
-                        col = (0.05, 0.22, 0.35, 0.92)
+                    # Deterministic pseudo-land mask from trig "noise"
+                    n = (
+                        math.sin(3.0 * lon)
+                        + 0.6 * math.sin(2.0 * lat)
+                        + 0.4 * math.sin(5.0 * (lon + lat))
+                        + 0.2 * math.sin(11.0 * lon + 3.0 * lat)
+                    )
+                    if n > 0.35:
+                        # land
+                        col = (0.15, 0.45, 0.22, 0.95)
+                        # deserts band
+                        if abs(lat_d) < 25 and n > 0.75:
+                            col = (0.62, 0.52, 0.28, 0.95)
+                    else:
+                        # ocean
+                        col = (0.05, 0.12, 0.28, 0.92)
+                        # shallow water near "coasts"
+                        if 0.25 < n < 0.35:
+                            col = (0.05, 0.22, 0.35, 0.92)
 
-            colors[i] = col
+                colors[i] = col
 
         try:
             md.setVertexColors(colors)
@@ -808,22 +820,22 @@ class MainWindow(QMainWindow):
         self.topo_route_item.setData(rx, ry, connect="pairs")
 
         # --- Metrics plots ---
-        if self.last_step_metrics is not None:
-            m = self.last_step_metrics
-            h = self.metric_hist
-            h["t"].append(float(sim_time_s))
-            h["delivery"].append(float(m.delivery_ratio) * 100.0)
-            h["delay"].append(float(m.avg_delay_s))
-            h["util"].append(float(m.avg_link_utilization) * 100.0)
-            # trim
-            if len(h["t"]) > TOPOLOGY_HISTORY_STEPS:
-                for k in list(h.keys()):
-                    h[k] = h[k][-TOPOLOGY_HISTORY_STEPS :]
+        # if self.last_step_metrics is not None:
+        #     m = self.last_step_metrics
+        #     h = self.metric_hist
+        #     h["t"].append(float(sim_time_s))
+        #     h["delivery"].append(float(m.delivery_ratio) * 100.0)
+        #     h["delay"].append(float(m.avg_delay_s))
+        #     h["util"].append(float(m.avg_link_utilization) * 100.0)
+        #     # trim
+        #     if len(h["t"]) > TOPOLOGY_HISTORY_STEPS:
+        #         for k in list(h.keys()):
+        #             h[k] = h[k][-TOPOLOGY_HISTORY_STEPS :]
 
-            x = np.arange(len(h["t"]))
-            self.curve_delivery.setData(x, h["delivery"])
-            self.curve_delay.setData(x, h["delay"])
-            self.curve_util.setData(x, h["util"])
+        #     x = np.arange(len(h["t"]))
+        #     self.curve_delivery.setData(x, h["delivery"])
+        #     self.curve_delay.setData(x, h["delay"])
+        #     self.curve_util.setData(x, h["util"])
 
         # Update Text
         color_hex = "#ff7b72" if "CRITICAL" in self.status_msg else "#3fb950"
