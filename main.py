@@ -253,23 +253,23 @@ class MainWindow(QMainWindow):
         self.lbl_telemetry.setStyleSheet("font-family: 'Consolas', monospace; font-size: 13px; color: #3fb950; background-color: #010409; padding: 15px; border: 1px solid #30363d; border-radius: 6px;")
         right_layout.addWidget(self.lbl_telemetry)
 
-        # 1b. Earth texture reference (external image)
-        earth_group = QGroupBox("EARTH REFERENCE")
-        earth_layout = QVBoxLayout()
-        self.lbl_earth_img = QLabel()
-        self.lbl_earth_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_earth_img.setStyleSheet("background-color: #010409; border: 1px solid #30363d; border-radius: 6px; padding: 6px;")
-        try:
-            pm = QPixmap(EARTH_TEXTURE_PATH)
-            if not pm.isNull():
-                self.lbl_earth_img.setPixmap(pm.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation))
-            else:
-                self.lbl_earth_img.setText(f"Missing image: {EARTH_TEXTURE_PATH}")
-        except Exception:
-            self.lbl_earth_img.setText(f"Failed to load: {EARTH_TEXTURE_PATH}")
-        earth_layout.addWidget(self.lbl_earth_img)
-        earth_group.setLayout(earth_layout)
-        right_layout.addWidget(earth_group)
+        # # 1b. Earth texture reference (external image)
+        # earth_group = QGroupBox("EARTH REFERENCE")
+        # earth_layout = QVBoxLayout()
+        # self.lbl_earth_img = QLabel()
+        # self.lbl_earth_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self.lbl_earth_img.setStyleSheet("background-color: #010409; border: 1px solid #30363d; border-radius: 6px; padding: 6px;")
+        # try:
+        #     pm = QPixmap(EARTH_TEXTURE_PATH)
+        #     if not pm.isNull():
+        #         self.lbl_earth_img.setPixmap(pm.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation))
+        #     else:
+        #         self.lbl_earth_img.setText(f"Missing image: {EARTH_TEXTURE_PATH}")
+        # except Exception:
+        #     self.lbl_earth_img.setText(f"Failed to load: {EARTH_TEXTURE_PATH}")
+        # earth_layout.addWidget(self.lbl_earth_img)
+        # earth_group.setLayout(earth_layout)
+        # right_layout.addWidget(earth_group)
         
         # 2. Mission Control Panel
         control_group = QGroupBox("MISSION CONTROL")
