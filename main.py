@@ -4,10 +4,12 @@ import random
 import numpy as np
 
 from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QLabel, QListWidget, 
                              QSplitter, QGroupBox, QSlider)
 
+import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from orbit import (
     OrbitalElements,
@@ -26,6 +28,7 @@ from failures import FailureModel, LinkImpairments
 from ground import GroundStation
 from link_budget import inverse_square_budget
 from logging_utils import CSVRunLogger
+from metrics import MetricsCollector
 
 # --- Realistic Physical Constants ---
 EARTH_RADIUS_KM = 6378.137 
@@ -61,6 +64,10 @@ GROUND_STATIONS = [
     ("New York", 40.7128, -74.0060),
     ("Tokyo", 35.6762, 139.6503),
 ]
+
+# --- UI ---
+EARTH_TEXTURE_PATH = "img/earth_texture.jpg"
+TOPOLOGY_HISTORY_STEPS = 300
 
 # --- Professional Dark Theme (QSS) ---
 DARK_THEME = """
@@ -168,6 +175,17 @@ class MainWindow(QMainWindow):
             self.ground_node_ids.append(gid)
         self.best_sat_for_station = {gs.gid: None for gs in self.ground_nodes}
         self.run_logger = None
+
+        # Topology / dashboard state
+        self.prev_edge_set = set()
+        self.failed_edges = []  # list of (u,v,ttl_steps)
+        self.metric_hist = {
+            "t": [],
+            "delivery": [],
+            "delay": [],
+            "util": [],
+        }
+        self.occlusion_enabled = True
         
         # Dynamic Parameters
         self.sim_dt_seconds = 5.0
@@ -180,6 +198,8 @@ class MainWindow(QMainWindow):
             TrafficGenerator(pattern=TRAFFIC_PATTERN, rate_pps=TRAFFIC_RATE_PPS, hotspot_id=self.trace_dst)
         )
         self.last_traffic_stats = None
+        self.metrics = MetricsCollector(sample_pairs=40)
+        self.last_step_metrics = None
 
         # Failure/impairment knobs (expose in UI later if needed)
         self.failure_model = FailureModel(
@@ -232,6 +252,24 @@ class MainWindow(QMainWindow):
         self.lbl_telemetry = QLabel("INITIALIZING...")
         self.lbl_telemetry.setStyleSheet("font-family: 'Consolas', monospace; font-size: 13px; color: #3fb950; background-color: #010409; padding: 15px; border: 1px solid #30363d; border-radius: 6px;")
         right_layout.addWidget(self.lbl_telemetry)
+
+        # 1b. Earth texture reference (external image)
+        earth_group = QGroupBox("EARTH REFERENCE")
+        earth_layout = QVBoxLayout()
+        self.lbl_earth_img = QLabel()
+        self.lbl_earth_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_earth_img.setStyleSheet("background-color: #010409; border: 1px solid #30363d; border-radius: 6px; padding: 6px;")
+        try:
+            pm = QPixmap(EARTH_TEXTURE_PATH)
+            if not pm.isNull():
+                self.lbl_earth_img.setPixmap(pm.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation))
+            else:
+                self.lbl_earth_img.setText(f"Missing image: {EARTH_TEXTURE_PATH}")
+        except Exception:
+            self.lbl_earth_img.setText(f"Failed to load: {EARTH_TEXTURE_PATH}")
+        earth_layout.addWidget(self.lbl_earth_img)
+        earth_group.setLayout(earth_layout)
+        right_layout.addWidget(earth_group)
         
         # 2. Mission Control Panel
         control_group = QGroupBox("MISSION CONTROL")
@@ -264,9 +302,27 @@ class MainWindow(QMainWindow):
         self.btn_reset = QPushButton("SYSTEM REBOOT")
         self.btn_reset.setStyleSheet("background-color: #238636; color: white; border-color: #2ea043;")
         self.btn_reset.clicked.connect(self.reset_network)
+
+        self.btn_pause = QPushButton("PAUSE")
+        self.btn_pause.setCheckable(True)
+        self.btn_pause.setStyleSheet("background-color: #21262d; color: white; border-color: #30363d;")
+        self.btn_pause.toggled.connect(self.toggle_pause)
+
+        self.btn_step = QPushButton("STEP")
+        self.btn_step.setStyleSheet("background-color: #21262d; color: white; border-color: #30363d;")
+        self.btn_step.clicked.connect(self.step_once)
+
+        self.btn_occlusion = QPushButton("OCCLUSION: ON")
+        self.btn_occlusion.setCheckable(True)
+        self.btn_occlusion.setChecked(True)
+        self.btn_occlusion.setStyleSheet("background-color: #21262d; color: white; border-color: #30363d;")
+        self.btn_occlusion.toggled.connect(self.toggle_occlusion)
         
         btn_layout.addWidget(self.btn_strike)
         btn_layout.addWidget(self.btn_reset)
+        btn_layout.addWidget(self.btn_pause)
+        btn_layout.addWidget(self.btn_step)
+        btn_layout.addWidget(self.btn_occlusion)
         control_layout.addLayout(btn_layout)
         
         control_group.setLayout(control_layout)
@@ -289,9 +345,67 @@ class MainWindow(QMainWindow):
         
         inspector_group.setLayout(inspector_layout)
         right_layout.addWidget(inspector_group)
+
+        # 4. Live topology panel (2D)
+        topo_group = QGroupBox("LIVE TOPOLOGY (LAT/LON)")
+        topo_layout = QVBoxLayout()
+        self.topo_plot = pg.PlotWidget()
+        self.topo_plot.setBackground('#010409')
+        self.topo_plot.showGrid(x=True, y=True, alpha=0.2)
+        self.topo_plot.setLabel('bottom', 'Longitude (deg)')
+        self.topo_plot.setLabel('left', 'Latitude (deg)')
+        self.topo_plot.setXRange(-180, 180)
+        self.topo_plot.setYRange(-90, 90)
+        self.topo_edges_item = pg.PlotDataItem(pen=pg.mkPen((80, 120, 200, 70), width=1))
+        self.topo_failed_item = pg.PlotDataItem(pen=pg.mkPen((220, 60, 60, 180), width=2))
+        self.topo_route_item = pg.PlotDataItem(pen=pg.mkPen((255, 200, 40, 220), width=3))
+        self.topo_nodes_item = pg.ScatterPlotItem(size=6, brush=pg.mkBrush(60, 180, 80, 220), pen=None)
+        self.topo_ground_item = pg.ScatterPlotItem(size=8, brush=pg.mkBrush(120, 160, 255, 230), pen=None)
+        self.topo_plot.addItem(self.topo_edges_item)
+        self.topo_plot.addItem(self.topo_failed_item)
+        self.topo_plot.addItem(self.topo_route_item)
+        self.topo_plot.addItem(self.topo_nodes_item)
+        self.topo_plot.addItem(self.topo_ground_item)
+        topo_layout.addWidget(self.topo_plot)
+        topo_group.setLayout(topo_layout)
+        right_layout.addWidget(topo_group)
+
+        # 5. Metrics-over-time plots
+        metrics_group = QGroupBox("METRICS OVER TIME")
+        metrics_layout = QVBoxLayout()
+        self.plot_delivery = pg.PlotWidget()
+        self.plot_delivery.setBackground('#010409')
+        self.plot_delivery.setMaximumHeight(110)
+        self.plot_delivery.showGrid(x=True, y=True, alpha=0.2)
+        self.plot_delivery.setLabel('left', 'Delivery %')
+        self.curve_delivery = self.plot_delivery.plot(pen=pg.mkPen((80, 200, 120), width=2))
+        metrics_layout.addWidget(self.plot_delivery)
+
+        self.plot_delay = pg.PlotWidget()
+        self.plot_delay.setBackground('#010409')
+        self.plot_delay.setMaximumHeight(110)
+        self.plot_delay.showGrid(x=True, y=True, alpha=0.2)
+        self.plot_delay.setLabel('left', 'Delay (s)')
+        self.curve_delay = self.plot_delay.plot(pen=pg.mkPen((120, 160, 255), width=2))
+        metrics_layout.addWidget(self.plot_delay)
+
+        self.plot_util = pg.PlotWidget()
+        self.plot_util.setBackground('#010409')
+        self.plot_util.setMaximumHeight(110)
+        self.plot_util.showGrid(x=True, y=True, alpha=0.2)
+        self.plot_util.setLabel('left', 'Util %')
+        self.curve_util = self.plot_util.plot(pen=pg.mkPen((255, 200, 40), width=2))
+        metrics_layout.addWidget(self.plot_util)
+
+        metrics_group.setLayout(metrics_layout)
+        right_layout.addWidget(metrics_group)
         
         splitter.addWidget(right_container)
         splitter.setSizes([1100, 500])
+
+    def toggle_occlusion(self, enabled: bool):
+        self.occlusion_enabled = bool(enabled)
+        self.btn_occlusion.setText("OCCLUSION: ON" if self.occlusion_enabled else "OCCLUSION: OFF")
 
     def update_speed(self, value):
         self.sim_dt_seconds = float(value)
@@ -300,6 +414,65 @@ class MainWindow(QMainWindow):
     def update_severity(self, value):
         self.strike_severity = value / 100.0
         self.lbl_severity.setText(f"Strike Severity: {value}% Node Loss")
+
+    def toggle_pause(self, paused: bool):
+        if paused:
+            self.btn_pause.setText("RESUME")
+            self.timer.stop()
+        else:
+            self.btn_pause.setText("PAUSE")
+            self.timer.start(16)
+
+    def step_once(self):
+        # single simulation step when paused
+        if self.timer.isActive():
+            return
+        self.update_simulation()
+
+    def _camera_position_world(self) -> np.ndarray:
+        """
+        Best-effort camera position in world coordinates (same units as GL items).
+        """
+        try:
+            p = self.gl_view.cameraPosition()
+            return np.array([float(p.x()), float(p.y()), float(p.z())], dtype=float)
+        except Exception:
+            # Fallback using azimuth/elevation/distance
+            try:
+                d = float(self.gl_view.opts.get("distance", 25.0))
+                az = math.radians(float(self.gl_view.opts.get("azimuth", 0.0)))
+                el = math.radians(float(self.gl_view.opts.get("elevation", 0.0)))
+                # pyqtgraph uses azimuth around z and elevation from xy plane
+                x = d * math.cos(el) * math.cos(az)
+                y = d * math.cos(el) * math.sin(az)
+                z = d * math.sin(el)
+                return np.array([x, y, z], dtype=float)
+            except Exception:
+                return np.array([0.0, 0.0, 25.0], dtype=float)
+
+    def _is_occluded_by_earth(self, point_world: np.ndarray, earth_radius_world: float) -> bool:
+        """
+        True if the point is behind the Earth sphere relative to the camera.
+        Uses ray-sphere intersection from camera to point.
+        """
+        cam = self._camera_position_world()
+        p = np.asarray(point_world, dtype=float)
+        d = p - cam
+        dd = float(np.dot(d, d))
+        if dd <= 1e-12:
+            return False
+        # Solve |cam + t d|^2 = R^2 for t in [0,1)
+        a = dd
+        b = 2.0 * float(np.dot(cam, d))
+        c = float(np.dot(cam, cam)) - earth_radius_world * earth_radius_world
+        disc = b * b - 4.0 * a * c
+        if disc <= 0.0:
+            return False
+        sqrt_disc = math.sqrt(disc)
+        t1 = (-b - sqrt_disc) / (2.0 * a)
+        t2 = (-b + sqrt_disc) / (2.0 * a)
+        # any intersection between camera and point means occluded
+        return (0.0 < t1 < 1.0) or (0.0 < t2 < 1.0)
 
     def init_gl_objects(self):
         earth_rad_scaled = EARTH_RADIUS_KM / 1000.0
@@ -397,6 +570,8 @@ class MainWindow(QMainWindow):
 
     def trigger_kinetic_strike(self):
         self.status_msg = f"CRITICAL: {int(self.strike_severity*100)}% KINETIC LOSS DETECTED"
+        # mark for convergence time tracking
+        self.metrics.notify_failure(self.last_sim_time_s)
         active_ids = [s.node_id for s in self.sats if s.is_active]
         if not active_ids: return
         num_destroy = int(len(active_ids) * self.strike_severity)
@@ -499,6 +674,13 @@ class MainWindow(QMainWindow):
             now_t=sim_time_s,
             dt_s=dt_s,
         )
+        self.last_step_metrics = self.metrics.step(
+            graph=self.graph,
+            router=self.router,
+            active_ids=active_ids_all,
+            traffic_stats=self.last_traffic_stats,
+            now_s=sim_time_s,
+        )
 
         # 6) Populate neighbor lists for inspector convenience
         for s in self.sats:
@@ -508,7 +690,9 @@ class MainWindow(QMainWindow):
 
         # 7) Render links from graph edges
         link_coords = []
+        edge_set = set()
         for u, v, _link in self.graph.edges():
+            edge_set.add((min(u, v), max(u, v)))
             if u < NUM_TOTAL_SATS:
                 pu = self.sats[u].pos_3d
             else:
@@ -517,6 +701,10 @@ class MainWindow(QMainWindow):
                 pv = self.sats[v].pos_3d
             else:
                 pv = (self.ground_nodes[v - NUM_TOTAL_SATS].ecef_position_km(EARTH_RADIUS_KM) / 1000.0)
+            if self.occlusion_enabled:
+                mid = (np.asarray(pu) + np.asarray(pv)) * 0.5
+                if self._is_occluded_by_earth(mid, earth_radius_world=EARTH_RADIUS_KM / 1000.0):
+                    continue
             link_coords.append(pu)
             link_coords.append(pv)
 
@@ -543,16 +731,110 @@ class MainWindow(QMainWindow):
             if self.sats[self.trace_src].is_active and self.sats[self.trace_dst].is_active:
                 path_trace = self.router.path(self.trace_src, self.trace_dst, max_hops=256)
                 
-        if len(path_trace) > 1: self.gl_packet_path.setData(pos=np.array([self.sats[pid].pos_3d for pid in path_trace]))
+        if len(path_trace) > 1:
+            pts = np.array([self.sats[pid].pos_3d for pid in path_trace], dtype=float)
+            if self.occlusion_enabled:
+                # keep only visible points (simple: drop whole path if midpoint occluded)
+                mid = pts[len(pts) // 2]
+                if self._is_occluded_by_earth(mid, earth_radius_world=EARTH_RADIUS_KM / 1000.0):
+                    pts = np.empty((0, 3))
+            self.gl_packet_path.setData(pos=pts)
         else: self.gl_packet_path.setData(pos=np.empty((0,3)))
+
+        # --- Live topology dashboard (2D lat/lon) ---
+        # Node positions
+        sat_points = []
+        for sid in active_ids:
+            r_ecef = sat_ecef_by_id.get(sid)
+            if r_ecef is None:
+                continue
+            lat_rad, lon_rad, _rmag = ecef_to_geodetic_spherical(r_ecef)
+            sat_points.append({"pos": (math.degrees(lon_rad), math.degrees(lat_rad))})
+        self.topo_nodes_item.setData(sat_points)
+
+        ground_points = []
+        for gs in self.ground_nodes:
+            ground_points.append({"pos": (math.degrees(gs.lon_rad), math.degrees(gs.lat_rad))})
+        self.topo_ground_item.setData(ground_points)
+
+        # Edge segments
+        # We draw edges using endpoint lat/lon of their nodes when possible.
+        node_ll = {}
+        for sid in active_ids:
+            r_ecef = sat_ecef_by_id.get(sid)
+            if r_ecef is None:
+                continue
+            lat_rad, lon_rad, _ = ecef_to_geodetic_spherical(r_ecef)
+            node_ll[sid] = (math.degrees(lon_rad), math.degrees(lat_rad))
+        for gs in self.ground_nodes:
+            node_ll[gs.gid] = (math.degrees(gs.lon_rad), math.degrees(gs.lat_rad))
+
+        ex, ey = [], []
+        for (u, v) in edge_set:
+            if u not in node_ll or v not in node_ll:
+                continue
+            (x1, y1), (x2, y2) = node_ll[u], node_ll[v]
+            ex += [x1, x2]
+            ey += [y1, y2]
+        self.topo_edges_item.setData(ex, ey, connect="pairs")
+
+        # Failed links (diff between previous and current)
+        removed = self.prev_edge_set - edge_set
+        for (u, v) in removed:
+            self.failed_edges.append((u, v, 40))
+        self.prev_edge_set = set(edge_set)
+
+        fx, fy = [], []
+        new_failed = []
+        for (u, v, ttl) in self.failed_edges:
+            if ttl <= 0:
+                continue
+            if u in node_ll and v in node_ll:
+                (x1, y1), (x2, y2) = node_ll[u], node_ll[v]
+                fx += [x1, x2]
+                fy += [y1, y2]
+            new_failed.append((u, v, ttl - 1))
+        self.failed_edges = new_failed
+        self.topo_failed_item.setData(fx, fy, connect="pairs")
+
+        # Active route highlight (sat->sat tracer)
+        rx, ry = [], []
+        if len(path_trace) > 1:
+            for a, b in zip(path_trace[:-1], path_trace[1:]):
+                if a in node_ll and b in node_ll:
+                    (x1, y1), (x2, y2) = node_ll[a], node_ll[b]
+                    rx += [x1, x2]
+                    ry += [y1, y2]
+        self.topo_route_item.setData(rx, ry, connect="pairs")
+
+        # --- Metrics plots ---
+        if self.last_step_metrics is not None:
+            m = self.last_step_metrics
+            h = self.metric_hist
+            h["t"].append(float(sim_time_s))
+            h["delivery"].append(float(m.delivery_ratio) * 100.0)
+            h["delay"].append(float(m.avg_delay_s))
+            h["util"].append(float(m.avg_link_utilization) * 100.0)
+            # trim
+            if len(h["t"]) > TOPOLOGY_HISTORY_STEPS:
+                for k in list(h.keys()):
+                    h[k] = h[k][-TOPOLOGY_HISTORY_STEPS :]
+
+            x = np.arange(len(h["t"]))
+            self.curve_delivery.setData(x, h["delivery"])
+            self.curve_delay.setData(x, h["delay"])
+            self.curve_util.setData(x, h["util"])
 
         # Update Text
         color_hex = "#ff7b72" if "CRITICAL" in self.status_msg else "#3fb950"
         if self.last_traffic_stats is not None:
             t = self.last_traffic_stats
+            m = self.last_step_metrics
             traffic_html = (
                 f"<b>Traffic:</b> in-flight={t.in_flight}, delivered={t.delivered}, dropped={t.dropped}<br>"
                 f"<b>Avg Delay:</b> {t.avg_delay_s:.3f} s &nbsp;&nbsp; <b>Avg Hops:</b> {t.avg_hops:.2f}<br>"
+                f"<b>Delivery Ratio:</b> {m.delivery_ratio*100:.1f}% &nbsp;&nbsp; <b>Avg Path:</b> {m.avg_path_len_hops:.2f} hops<br>"
+                f"<b>Link Util:</b> {m.avg_link_utilization*100:.1f}% &nbsp;&nbsp; <b>Route Updates:</b> {m.route_updates}<br>"
                 f"<b>Routing:</b> {self.router.name} ({ROUTING_COST})<br><br>"
             )
         else:
@@ -607,6 +889,7 @@ class MainWindow(QMainWindow):
         # CSV logging (one row per step)
         if self.run_logger is not None and self.last_traffic_stats is not None:
             t = self.last_traffic_stats
+            m = self.last_step_metrics
             self.run_logger.log_row(
                 {
                     "time_s": float(sim_time_s),
@@ -620,6 +903,11 @@ class MainWindow(QMainWindow):
                     "dropped_total": int(t.dropped),
                     "avg_delay_s": float(t.avg_delay_s),
                     "avg_hops": float(t.avg_hops),
+                    "delivery_ratio": float(m.delivery_ratio) if m is not None else 0.0,
+                    "avg_path_len_hops": float(m.avg_path_len_hops) if m is not None else 0.0,
+                    "avg_link_utilization": float(m.avg_link_utilization) if m is not None else 0.0,
+                    "route_updates": int(m.route_updates) if m is not None else 0,
+                    "convergence_s": float(m.convergence_s) if (m is not None and m.convergence_s is not None) else "",
                 }
             )
 
