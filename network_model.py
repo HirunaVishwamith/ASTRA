@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Dict, Iterable, List, Tuple
+from typing import Callable, Dict, Iterable, List, Tuple
 
 import numpy as np
 
@@ -86,12 +86,13 @@ def build_topology(
     base_bandwidth_mbps: float = 2000.0,
     base_loss_prob: float = 0.0005,
     extra_latency_s: float = 0.001,
+    link_budget: Callable[[float, float, float], LinkProperties] | None = None,
 ) -> None:
     """
     Recompute topology.
     - LOS + range constrained
     - latency from distance / c + extra_latency_s
-    - bandwidth & loss are currently constant knobs (hook for link budget later)
+    - bandwidth & loss can be constant knobs or computed by a link_budget(distance_km, base_bw, base_loss)
     """
     graph.clear()
     for idx_i in range(len(active_ids)):
@@ -107,7 +108,13 @@ def build_topology(
                 continue
 
             latency = d_km / SPEED_OF_LIGHT_KM_S + extra_latency_s
-            props = LinkProperties(latency_s=float(latency), bandwidth_mbps=float(base_bandwidth_mbps), loss_prob=float(base_loss_prob))
+            if link_budget is None:
+                props = LinkProperties(
+                    latency_s=float(latency), bandwidth_mbps=float(base_bandwidth_mbps), loss_prob=float(base_loss_prob)
+                )
+            else:
+                lb = link_budget(float(d_km), float(base_bandwidth_mbps), float(base_loss_prob))
+                props = LinkProperties(latency_s=float(latency), bandwidth_mbps=float(lb.bandwidth_mbps), loss_prob=float(lb.loss_prob))
             link = Link(a=a, b=b, distance_km=d_km, props=props)
             graph.add_undirected(a, b, link)
 

@@ -28,6 +28,7 @@ class Packet:
     dropped_t: Optional[float] = None
     drop_reason: Optional[str] = None
     path: List[int] = field(default_factory=list)
+    size_bytes: int = 1200  # typical L2-ish payload, used for bandwidth queueing
 
 
 @dataclass
@@ -100,6 +101,8 @@ class TrafficSimulator:
         self._next_pid = 1
         self.packets: Dict[int, Packet] = {}
         self.in_transit: List[InTransit] = []
+        # outgoing_queues[(u,v)] = list[pids] waiting to send
+        self.outgoing_queues: Dict[Tuple[int, int], List[int]] = {}
 
     def step(self, *, graph: NetworkGraph, router: Router, active_ids: List[int], now_t: float, dt_s: float) -> TrafficStats:
         active_set = set(active_ids)
@@ -130,7 +133,7 @@ class TrafficSimulator:
             pkt = Packet(pid=pid, src=src, dst=dst, created_t=now_t, last_node=src, path=[src])
             self.packets[pid] = pkt
 
-        # 3) forward packets at nodes (simple model: one hop per step per packet if possible)
+        # 3) enqueue packets to their next hop (routing decision)
         # Only consider packets that are currently "at a node" (not in transit).
         in_transit_pids = {it.pid for it in self.in_transit}
         for pkt in list(self.packets.values()):
@@ -160,16 +163,61 @@ class TrafficSimulator:
                 pkt.dropped_t = now_t
                 pkt.drop_reason = "route_broken"
                 continue
-            if random.random() < link.props.loss_prob:
-                pkt.dropped_t = now_t
-                pkt.drop_reason = "link_loss"
+
+            qkey = (pkt.last_node, nh)
+            q = self.outgoing_queues.setdefault(qkey, [])
+            if pkt.pid not in q:
+                q.append(pkt.pid)
+
+        # 4) transmit from queues subject to link bandwidth (simple store-and-forward)
+        # capacity_bits_per_step = bandwidth_mbps * 1e6 * dt_s
+        for (u, v), q in list(self.outgoing_queues.items()):
+            if not q:
+                continue
+            if u not in active_set or v not in active_set:
+                self.outgoing_queues[(u, v)] = []
+                continue
+            link = graph.get_link(u, v)
+            if link is None:
+                self.outgoing_queues[(u, v)] = []
                 continue
 
-            pkt.ttl_hops -= 1
-            pkt.hops += 1
-            self.in_transit.append(InTransit(pid=pkt.pid, u=pkt.last_node, v=nh, arrival_t=now_t + link.props.latency_s))
+            capacity_bits = float(link.props.bandwidth_mbps) * 1e6 * float(dt_s)
+            sent: List[int] = []
+            while q and capacity_bits > 0:
+                pid = q[0]
+                pkt = self.packets.get(pid)
+                if pkt is None or pkt.delivered_t is not None or pkt.dropped_t is not None:
+                    q.pop(0)
+                    continue
+                # packet may have moved while queued (shouldn't, but be robust)
+                if pkt.last_node != u:
+                    q.pop(0)
+                    continue
 
-        # 4) compute stats snapshot
+                bits = float(pkt.size_bytes) * 8.0
+                if bits > capacity_bits:
+                    break
+
+                # apply loss on actual send
+                if random.random() < link.props.loss_prob:
+                    pkt.dropped_t = now_t
+                    pkt.drop_reason = "link_loss"
+                    q.pop(0)
+                    continue
+
+                pkt.ttl_hops -= 1
+                pkt.hops += 1
+                capacity_bits -= bits
+                sent.append(pid)
+                q.pop(0)
+                self.in_transit.append(InTransit(pid=pid, u=u, v=v, arrival_t=now_t + float(link.props.latency_s)))
+
+            if not q:
+                # keep dict small
+                del self.outgoing_queues[(u, v)]
+
+        # 5) compute stats snapshot
         stats = TrafficStats()
         stats.generated = sum(1 for p in self.packets.values() if p.created_t >= now_t - dt_s - 1e-9)
         delivered = [p for p in self.packets.values() if p.delivered_t is not None]

@@ -289,3 +289,17 @@ def has_line_of_sight(r1_km: np.ndarray, r2_km: np.ndarray, body_radius_km: floa
     closest = a + t * d
     return _norm(closest) > (body_radius_km + clearance_km)
 
+
+def is_visible_from_station_ecef(station_ecef_km: np.ndarray, sat_ecef_km: np.ndarray, earth_radius_km: float, min_elev_deg: float) -> bool:
+    """
+    Visibility test for ground->sat:
+    - elevation above mask
+    - LOS (segment doesn't intersect Earth)
+    """
+    from ground import elevation_angle_rad  # local import to avoid cycles
+
+    el = elevation_angle_rad(station_ecef_km, sat_ecef_km)
+    if el < math.radians(float(min_elev_deg)):
+        return False
+    return has_line_of_sight(station_ecef_km, sat_ecef_km, body_radius_km=float(earth_radius_km), clearance_km=0.0)
+

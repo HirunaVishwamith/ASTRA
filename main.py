@@ -18,10 +18,14 @@ from orbit import (
     eci_to_ecef,
     ecef_to_geodetic_spherical,
 )
-from network_model import NetworkGraph, build_topology
+from orbit import is_visible_from_station_ecef
+from network_model import NetworkGraph, build_topology, Link, LinkProperties, SPEED_OF_LIGHT_KM_S
 from routing import DijkstraRouter, DistanceVectorRouter, Router
 from traffic import TrafficGenerator, TrafficSimulator
 from failures import FailureModel, LinkImpairments
+from ground import GroundStation
+from link_budget import inverse_square_budget
+from logging_utils import CSVRunLogger
 
 # --- Realistic Physical Constants ---
 EARTH_RADIUS_KM = 6378.137 
@@ -42,6 +46,21 @@ ROUTING_MODE = "distance_vector"  # "distance_vector" | "dijkstra"
 ROUTING_COST = "hops"  # "hops" | "latency"
 TRAFFIC_PATTERN = "uniform"  # "uniform" | "hotspot" | "burst"
 TRAFFIC_RATE_PPS = 3.0
+
+# --- Ground Stations ---
+GROUND_MIN_ELEV_DEG = 10.0
+GROUND_SAT_MAX_RANGE_KM = 3000.0
+GROUND_BW_Mbps = 300.0
+GROUND_BASE_LOSS = 0.002
+
+# A few example stations (extend as needed)
+GROUND_STATIONS = [
+    ("Sri Lanka", 7.8731, 80.7718),
+    ("Singapore", 1.3521, 103.8198),
+    ("London", 51.5074, -0.1278),
+    ("New York", 40.7128, -74.0060),
+    ("Tokyo", 35.6762, 139.6503),
+]
 
 # --- Professional Dark Theme (QSS) ---
 DARK_THEME = """
@@ -131,6 +150,24 @@ class MainWindow(QMainWindow):
         self.selected_sat_id = None
         self.status_msg = "NOMINAL"
         self.last_sim_time_s = 0.0
+
+        # --- Ground Stations ---
+        self.ground_nodes = []  # list[GroundStation]
+        self.ground_node_ids = []
+        for i, (name, lat_deg, lon_deg) in enumerate(GROUND_STATIONS):
+            gid = NUM_TOTAL_SATS + i
+            gs = GroundStation(
+                gid=gid,
+                name=name,
+                lat_rad=math.radians(float(lat_deg)),
+                lon_rad=math.radians(float(lon_deg)),
+                alt_km=0.0,
+                min_elev_deg=GROUND_MIN_ELEV_DEG,
+            )
+            self.ground_nodes.append(gs)
+            self.ground_node_ids.append(gid)
+        self.best_sat_for_station = {gs.gid: None for gs in self.ground_nodes}
+        self.run_logger = None
         
         # Dynamic Parameters
         self.sim_dt_seconds = 5.0
@@ -153,6 +190,11 @@ class MainWindow(QMainWindow):
                 loss_multiplier=1.0,
             )
         )
+
+        # Optional: CSV logging (toggle later; default off)
+        self.log_to_csv = False
+        if self.log_to_csv:
+            self.run_logger = CSVRunLogger("runs/latest_run.csv")
 
         self.setup_ui()
         self.init_gl_objects()
@@ -261,9 +303,65 @@ class MainWindow(QMainWindow):
 
     def init_gl_objects(self):
         earth_rad_scaled = EARTH_RADIUS_KM / 1000.0
-        md = gl.MeshData.sphere(rows=30, cols=30, radius=earth_rad_scaled)
-        self.earth_mesh = gl.GLMeshItem(meshdata=md, smooth=True, color=(0.08, 0.12, 0.2, 0.7), shader='shaded', glOptions='translucent')
+        md = gl.MeshData.sphere(rows=60, cols=60, radius=earth_rad_scaled)
+
+        # Procedural "texture" for orientation (no external assets needed)
+        verts = md.vertexes()
+        colors = np.zeros((verts.shape[0], 4), dtype=float)
+        for i, (x, y, z) in enumerate(verts):
+            r = math.sqrt(x * x + y * y + z * z) + 1e-12
+            lat = math.asin(z / r)
+            lon = math.atan2(y, x)
+            lat_d = math.degrees(lat)
+
+            # Polar caps
+            if abs(lat_d) > 70:
+                col = (0.95, 0.97, 1.0, 0.95)
+            else:
+                # Deterministic pseudo-land mask from trig "noise"
+                n = (
+                    math.sin(3.0 * lon)
+                    + 0.6 * math.sin(2.0 * lat)
+                    + 0.4 * math.sin(5.0 * (lon + lat))
+                    + 0.2 * math.sin(11.0 * lon + 3.0 * lat)
+                )
+                if n > 0.35:
+                    # land
+                    col = (0.15, 0.45, 0.22, 0.95)
+                    # deserts band
+                    if abs(lat_d) < 25 and n > 0.75:
+                        col = (0.62, 0.52, 0.28, 0.95)
+                else:
+                    # ocean
+                    col = (0.05, 0.12, 0.28, 0.92)
+                    # shallow water near "coasts"
+                    if 0.25 < n < 0.35:
+                        col = (0.05, 0.22, 0.35, 0.92)
+
+            colors[i] = col
+
+        try:
+            md.setVertexColors(colors)
+            earth_color = (1, 1, 1, 1)
+        except Exception:
+            # Fallback if pyqtgraph build lacks vertex color support
+            earth_color = (0.08, 0.12, 0.2, 0.75)
+
+        self.earth_mesh = gl.GLMeshItem(meshdata=md, smooth=True, color=earth_color, shader='shaded', glOptions='translucent')
         self.gl_view.addItem(self.earth_mesh)
+
+        # Orientation helpers: equator + prime meridian
+        steps = 200
+        eq = np.zeros((steps + 1, 3), dtype=float)
+        pm = np.zeros((steps + 1, 3), dtype=float)
+        for k in range(steps + 1):
+            ang = (2 * math.pi / steps) * k
+            eq[k] = [earth_rad_scaled * math.cos(ang), earth_rad_scaled * math.sin(ang), 0.0]
+            pm[k] = [earth_rad_scaled * math.cos(0.0) * math.cos(ang), earth_rad_scaled * math.cos(0.0) * math.sin(0.0), earth_rad_scaled * math.sin(ang)]
+        self.gl_equator = gl.GLLinePlotItem(pos=eq, color=(1.0, 1.0, 1.0, 0.25), width=1, antialias=True)
+        self.gl_view.addItem(self.gl_equator)
+        self.gl_meridian = gl.GLLinePlotItem(pos=pm, color=(1.0, 0.3, 0.3, 0.28), width=1, antialias=True)
+        self.gl_view.addItem(self.gl_meridian)
         
         for plane in range(NUM_PLANES):
             steps = 100
@@ -285,6 +383,8 @@ class MainWindow(QMainWindow):
         self.gl_view.addItem(self.gl_dead_scatter)
         self.gl_selected_scatter = gl.GLScatterPlotItem()
         self.gl_view.addItem(self.gl_selected_scatter)
+        self.gl_ground_scatter = gl.GLScatterPlotItem()
+        self.gl_view.addItem(self.gl_ground_scatter)
         
         self.gl_network_links = gl.GLLinePlotItem(mode='lines', color=(0.2, 0.3, 0.5, 0.3), width=1.5, antialias=True)
         self.gl_view.addItem(self.gl_network_links)
@@ -333,6 +433,8 @@ class MainWindow(QMainWindow):
         # 2) Build network graph (LOS + range) with link properties
         active_sats = [s for s in self.sats if s.is_active]
         active_ids = [s.node_id for s in active_sats]
+        # Include ground nodes in the graph
+        active_ids_all = list(active_ids) + list(self.ground_node_ids)
         r_eci_by_id = {s.node_id: s.state.r_km for s in active_sats}
         build_topology(
             self.graph,
@@ -344,19 +446,56 @@ class MainWindow(QMainWindow):
             base_bandwidth_mbps=2000.0,
             base_loss_prob=0.0005,
             extra_latency_s=0.001,
+            link_budget=lambda d_km, bw, loss: inverse_square_budget(d_km, bw, loss, ref_km=500.0),
         )
+
+        # 2b) Add ground<->sat links using elevation mask + LOS
+        # Compute sat ECEF once for this step.
+        sat_ecef_by_id = {sid: eci_to_ecef(r_eci_by_id[sid], sim_time_s, theta0_rad=0.0) for sid in active_ids}
+        ground_pts_scaled = []
+        for gs in self.ground_nodes:
+            gs_ecef = gs.ecef_position_km(EARTH_RADIUS_KM)
+            ground_pts_scaled.append(gs_ecef / 1000.0)
+            best = None
+            best_el = -1e9
+            for sid in active_ids:
+                sat_ecef = sat_ecef_by_id[sid]
+                if not is_visible_from_station_ecef(gs_ecef, sat_ecef, EARTH_RADIUS_KM, gs.min_elev_deg):
+                    continue
+                d_km = float(np.linalg.norm(sat_ecef - gs_ecef))
+                if d_km > GROUND_SAT_MAX_RANGE_KM:
+                    continue
+
+                # Track best-elevation visible satellite (handover foundation)
+                # Approx: maximize dot with up; reuse elevation function via visibility helper already checked.
+                up = gs_ecef / float(np.linalg.norm(gs_ecef))
+                rho = (sat_ecef - gs_ecef)
+                rho_norm = float(np.linalg.norm(rho))
+                el_sin = float(np.dot(rho / max(1e-9, rho_norm), up))
+                if el_sin > best_el:
+                    best_el = el_sin
+                    best = sid
+
+                # Build a link in the shared graph
+                latency = d_km / SPEED_OF_LIGHT_KM_S + 0.003  # ground network adds extra processing
+                lb = inverse_square_budget(d_km, GROUND_BW_Mbps, GROUND_BASE_LOSS, ref_km=800.0)
+                props = LinkProperties(latency_s=float(latency), bandwidth_mbps=float(lb.bandwidth_mbps), loss_prob=float(lb.loss_prob))
+                link = Link(a=gs.gid, b=sid, distance_km=float(d_km), props=props)
+                self.graph.add_undirected(gs.gid, sid, link)
+
+            self.best_sat_for_station[gs.gid] = best
 
         # 3) Apply failure/impairment models (blackouts, spikes, loss scaling)
         self.failure_model.apply(self.graph, dt_s=dt_s)
 
         # 4) Routing step (modular)
-        self.router.step(self.graph, active_ids)
+        self.router.step(self.graph, active_ids_all)
 
         # 5) Traffic step (packets + metrics)
         self.last_traffic_stats = self.traffic.step(
             graph=self.graph,
             router=self.router,
-            active_ids=active_ids,
+            active_ids=active_ids_all,
             now_t=sim_time_s,
             dt_s=dt_s,
         )
@@ -365,13 +504,27 @@ class MainWindow(QMainWindow):
         for s in self.sats:
             s.neighbors = []
         for u in active_ids:
-            self.sats[u].neighbors = list(self.graph.neighbors(u).keys())
+            self.sats[u].neighbors = [n for n in self.graph.neighbors(u).keys() if n < NUM_TOTAL_SATS]
 
         # 7) Render links from graph edges
         link_coords = []
         for u, v, _link in self.graph.edges():
-            link_coords.append(self.sats[u].pos_3d)
-            link_coords.append(self.sats[v].pos_3d)
+            if u < NUM_TOTAL_SATS:
+                pu = self.sats[u].pos_3d
+            else:
+                pu = (self.ground_nodes[u - NUM_TOTAL_SATS].ecef_position_km(EARTH_RADIUS_KM) / 1000.0)
+            if v < NUM_TOTAL_SATS:
+                pv = self.sats[v].pos_3d
+            else:
+                pv = (self.ground_nodes[v - NUM_TOTAL_SATS].ecef_position_km(EARTH_RADIUS_KM) / 1000.0)
+            link_coords.append(pu)
+            link_coords.append(pv)
+
+        # Render ground stations
+        if len(ground_pts_scaled) > 0:
+            self.gl_ground_scatter.setData(pos=np.array(ground_pts_scaled), color=(0.58, 0.65, 1.0, 0.95), size=7, pxMode=True)
+        else:
+            self.gl_ground_scatter.setData(pos=np.empty((0, 3)))
 
         active_pts = np.array([s.pos_3d for s in self.sats if s.is_active])
         dead_pts = np.array([s.pos_3d for s in self.sats if not s.is_active])
@@ -449,6 +602,25 @@ class MainWindow(QMainWindow):
                 f"[{sat.pos_3d[0]*1000:.1f}, {sat.pos_3d[1]*1000:.1f}, {sat.pos_3d[2]*1000:.1f}]<br><br>"
                 f"<b>ECI Velocity (km/s):</b><br>"
                 f"[{sat.vel_eci_km_s[0]:.3f}, {sat.vel_eci_km_s[1]:.3f}, {sat.vel_eci_km_s[2]:.3f}]"
+            )
+
+        # CSV logging (one row per step)
+        if self.run_logger is not None and self.last_traffic_stats is not None:
+            t = self.last_traffic_stats
+            self.run_logger.log_row(
+                {
+                    "time_s": float(sim_time_s),
+                    "active_sats": int(len(active_pts)),
+                    "links_total": int(len(link_coords) // 2),
+                    "router": str(self.router.name),
+                    "routing_cost": str(ROUTING_COST),
+                    "traffic_pattern": str(TRAFFIC_PATTERN),
+                    "in_flight": int(t.in_flight),
+                    "delivered_total": int(t.delivered),
+                    "dropped_total": int(t.dropped),
+                    "avg_delay_s": float(t.avg_delay_s),
+                    "avg_hops": float(t.avg_hops),
+                }
             )
 
 if __name__ == '__main__':
