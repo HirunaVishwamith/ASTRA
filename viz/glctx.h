@@ -19,7 +19,11 @@ typedef struct {
     int   quit;        /* window close / Esc / Q                           */
     int   toggle_pause;/* P pressed                                        */
     int   reboot;      /* R pressed                                        */
-    int   strike;      /* S / left-click: strike a satellite               */
+    int   strike;      /* S pressed: strike the selected satellite         */
+    int   route_mode;  /* M pressed: toggle Dijkstra/Distance-Vector       */
+    int   sel_next, sel_prev;  /* Down/Up or ]/[ : move selection          */
+    int   click;       /* left-click (no drag): pick at click_x/click_y    */
+    float click_x, click_y;
 } VizInput;
 
 /* Offscreen EGL context (w x h). Returns NULL on failure. */

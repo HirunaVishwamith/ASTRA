@@ -13,6 +13,7 @@
 #include "astra/sim_thread.h"
 #include "glctx.h"
 #include "render.h"
+#include "mat4.h"
 #include "hud.h"
 #include "ui.h"
 #include "image.h"
@@ -28,6 +29,40 @@ static SimThread TH;
 static void nap_ms(long ms) {
     struct timespec ts = { ms/1000, (ms%1000)*1000000L };
     nanosleep(&ts, NULL);
+}
+
+/* Project an ECI-km point to screen px via the render MVP. Returns 1 if in
+ * front of the camera. (sx,sy) in pixels, top-left origin. */
+static int project(const float m[16], double kx, double ky, double kz,
+                   int w, int h, float *sx, float *sy) {
+    float s = render_world_scale();
+    float X=(float)kx*s, Y=(float)ky*s, Z=(float)kz*s;
+    float cx = m[0]*X + m[4]*Y + m[8]*Z + m[12];
+    float cy = m[1]*X + m[5]*Y + m[9]*Z + m[13];
+    float cw = m[3]*X + m[7]*Y + m[11]*Z + m[15];
+    if (cw <= 1e-4f) return 0;
+    *sx = (cx/cw*0.5f + 0.5f) * (float)w;
+    *sy = (1.0f - (cy/cw*0.5f + 0.5f)) * (float)h;
+    return 1;
+}
+
+/* Is satellite P (ECI km) hidden behind the Earth from camera eye E (world)? */
+static int occluded(fv3 eye, double px, double py, double pz) {
+    float s = render_world_scale(), R = 6378.137f*s;
+    fv3 P = { (float)px*s, (float)py*s, (float)pz*s };
+    fv3 d = { P.x-eye.x, P.y-eye.y, P.z-eye.z };
+    float L = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); if (L<1e-4f) return 0;
+    d.x/=L; d.y/=L; d.z/=L;
+    float tca = -(eye.x*d.x+eye.y*d.y+eye.z*d.z);
+    float d2 = (eye.x*eye.x+eye.y*eye.y+eye.z*eye.z) - tca*tca;
+    if (d2 >= R*R) return 0;
+    float thc = sqrtf(R*R-d2), t0 = tca-thc;
+    return (t0 > 0.01f && t0 < L-0.01f);
+}
+
+static fv3 cam_eye(Camera cam) {
+    float ce=cosf(cam.el),se=sinf(cam.el),ca=cosf(cam.az),sa=sinf(cam.az);
+    return (fv3){ cam.dist*ce*ca, cam.dist*se, cam.dist*ce*sa };
 }
 
 int main(int argc, char **argv) {
@@ -80,15 +115,44 @@ int main(int argc, char **argv) {
 
         if (in.toggle_pause) { Command cmd = { CMD_PAUSE, (uint32_t)(SIM.paused?0:1), 0 }; astra_cmd_push(&SIM, cmd); }
         if (in.reboot)       { Command cmd = { CMD_REBOOT_ALL, 0, 0 }; astra_cmd_push(&SIM, cmd); }
-        if (in.strike)       { Command cmd = { CMD_STRIKE, (uint32_t)(rand()% (int)SIM.num_sats), 0 }; astra_cmd_push(&SIM, cmd); }
+        if (in.strike && selected >= 0) { Command cmd = { CMD_STRIKE, (uint32_t)selected, 0 }; astra_cmd_push(&SIM, cmd); }
+        if (in.route_mode)   { route_dv = !route_dv; Command cmd = { CMD_ROUTE_MODE, (uint32_t)route_dv, 0 }; astra_cmd_push(&SIM, cmd); }
+        if (snap) {
+            int ns = (int)snap->sat_count;
+            if (in.sel_next) selected = (selected+1) % ns;
+            if (in.sel_prev) selected = (selected-1+ns) % ns;
+        }
 
         int w, h; glctx_size(c, &w, &h);
         render_resize(r, w, h);
 
+        /* projection for picking + callout */
+        float mvp[16]; render_view_proj(cam, w, h, mvp);
+        fv3 eye = cam_eye(cam);
+
+        if (snap && in.click) {        /* pick nearest visible satellite */
+            float best = 18.0f; int hit = -1;
+            for (uint32_t i = 0; i < snap->sat_count; ++i) {
+                if (!snap->sat[i].alive) continue;
+                if (occluded(eye, snap->sat[i].r.x, snap->sat[i].r.y, snap->sat[i].r.z)) continue;
+                float sx, sy;
+                if (!project(mvp, snap->sat[i].r.x, snap->sat[i].r.y, snap->sat[i].r.z, w, h, &sx, &sy)) continue;
+                float d = fabsf(sx-in.click_x) + fabsf(sy-in.click_y);
+                if (d < best) { best = d; hit = (int)i; }
+            }
+            if (hit >= 0) selected = hit;
+        }
+
         if (snap) {
             render_frame(r, snap, cam);
+            /* selected asset screen position for the callout */
+            float ssx=0, ssy=0; int son=0;
+            if (selected >= 0 && selected < (int)snap->sat_count && snap->sat[selected].alive) {
+                son = project(mvp, snap->sat[selected].r.x, snap->sat[selected].r.y, snap->sat[selected].r.z, w, h, &ssx, &ssy);
+                if (son && occluded(eye, snap->sat[selected].r.x, snap->sat[selected].r.y, snap->sat[selected].r.z)) son = 0;
+            }
             ui_begin(ui, w, h);
-            hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv, SIM.speed);
+            hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv, SIM.speed, ssx, ssy, son);
             ui_end(ui);
         } else {
             glClearColor(0.01f,0.01f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);

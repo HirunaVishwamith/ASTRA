@@ -22,4 +22,10 @@ void      render_resize(Renderer *r, int w, int h);   /* viewport/aspect only */
 /* Draw one frame into the currently-bound framebuffer. */
 void      render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam);
 
+/* The view-projection matrix (column-major, 16 floats) for a camera at (w,h).
+ * Same transform render_frame uses, so callers can project world points to
+ * screen for picking / 2D callouts. World units are ECI-km * 0.001. */
+void      render_view_proj(Camera cam, int w, int h, float out_mvp[16]);
+float     render_world_scale(void);   /* km -> world units (0.001) */
+
 #endif /* ASTRA_RENDER_H */

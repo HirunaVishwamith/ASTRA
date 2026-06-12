@@ -117,7 +117,8 @@ static void plot(Hud *h, UI *u, float x, float y, float w, float hgt,
 
 /* ---- main layout --------------------------------------------------------- */
 void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
-              int selected_sat, int paused, int route_dv, double speed) {
+              int selected_sat, int paused, int route_dv, double speed,
+              float sel_sx, float sel_sy, int sel_onscreen) {
     char buf[128];
 
     /* advance history once per published frame */
@@ -232,4 +233,19 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
          (snprintf(buf,sizeof buf,"%.0f%%",snap->delivery_ratio*100.0f),buf));
     plot(h, u, bx+bw+16, by, bw, bh, h->util, h->hn, h->hhead, 0.0f, 0.30f, C_CYAN, "LINK UTILISATION",
          (snprintf(buf,sizeof buf,"%.1f%%",snap->link_util*100.0f),buf));
+
+    /* ===== 3D selection callout ===== */
+    if (sel_onscreen && selected_sat >= 0 && selected_sat < (int)snap->sat_count) {
+        UIColor ring = snap->sat[selected_sat].alive ? C_CYAN : C_RED;
+        ui_arc(u, sel_sx, sel_sy, 13.0f, 0.0f, 6.2832f, 1.6f, ring);
+        ui_arc(u, sel_sx, sel_sy, 19.0f, 0.3f, 2.0f, 1.4f, ui_rgba(ring.r,ring.g,ring.b,0.5f));
+        /* leader line + tag */
+        float tx = sel_sx + 24, ty = sel_sy - 24;
+        ui_line(u, sel_sx+9, sel_sy-9, tx, ty, 1.2f, ring);
+        snprintf(buf, sizeof buf, "STARLINK-%03d", selected_sat);
+        float tagw = ui_text_measure(h->f_small, buf);
+        ui_rect(u, tx-3, ty-3, tagw+10, 18, ui_rgba(0.02f,0.06f,0.10f,0.85f));
+        ui_rect(u, tx-3, ty-3, 2, 18, ring);
+        ui_text(u, h->f_small, tx+4, ty, C_WHITE, buf);
+    }
 }

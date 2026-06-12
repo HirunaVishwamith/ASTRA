@@ -244,6 +244,16 @@ void render_destroy(Renderer *r) {
 }
 void render_resize(Renderer *r, int w, int h) { r->w = w; r->h = h; }
 
+void render_view_proj(Camera cam, int w, int h, float out[16]) {
+    float ce=cosf(cam.el), se=sinf(cam.el), ca=cosf(cam.az), sa=sinf(cam.az);
+    fv3 eye = { cam.dist*ce*ca, cam.dist*se, cam.dist*ce*sa };
+    mat4 proj = mat4_perspective(cam.fov, (float)w/(float)h, 0.4f, 600.0f);
+    mat4 view = mat4_look_at(eye, fv3_make(0,0,0), fv3_make(0,1,0));
+    mat4 mvp  = mat4_mul(proj, view);
+    memcpy(out, mvp.m, 16*sizeof(float));
+}
+float render_world_scale(void) { return WORLD_SCALE; }
+
 static void link_color(int up, float util, float *c) {
     if (!up) { c[0]=0.45f; c[1]=0.06f; c[2]=0.06f; return; }
     float u = util < 0 ? 0 : (util > 1 ? 1 : util);

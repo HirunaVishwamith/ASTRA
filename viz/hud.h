@@ -13,9 +13,12 @@ Hud  *hud_create(void);
 void  hud_destroy(Hud *h);
 
 /* Draw the whole dashboard. selected_sat highlights an asset (-1 = none);
- * paused/route_dv/speed reflect sim control state for the readouts. */
+ * paused/route_dv/speed reflect sim control state for the readouts.
+ * (sel_sx,sel_sy) is the selected asset's on-screen position for a 3D callout;
+ * sel_onscreen=0 when it is off-screen or occluded. */
 void  hud_draw(Hud *h, UI *u, const RenderSnapshot *snap,
                int screen_w, int screen_h,
-               int selected_sat, int paused, int route_dv, double speed);
+               int selected_sat, int paused, int route_dv, double speed,
+               float sel_sx, float sel_sy, int sel_onscreen);
 
 #endif /* ASTRA_HUD_H */

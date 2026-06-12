@@ -25,6 +25,7 @@ typedef struct {
     GLXContext ctx;
     Atom       wm_delete;
     int        dragging, last_x, last_y;
+    int        press_x, press_y, moved;   /* click-vs-drag discrimination */
     VizInput   acc;
 } GlxImpl;
 
@@ -43,6 +44,9 @@ static void handle_key(GlxImpl *g, KeySym ks) {
         case XK_p: case XK_P: g->acc.toggle_pause = 1; break;
         case XK_r: case XK_R: g->acc.reboot = 1; break;
         case XK_s: case XK_S: g->acc.strike = 1; break;
+        case XK_m: case XK_M: g->acc.route_mode = 1; break;
+        case XK_Down: case XK_bracketright: g->acc.sel_next = 1; break;
+        case XK_Up:   case XK_bracketleft:  g->acc.sel_prev = 1; break;
         default: break;
     }
 }
@@ -61,18 +65,30 @@ static int glx_swap(GLCtx *c) {
             break;
         case KeyPress: handle_key(g, XLookupKeysym(&ev.xkey, 0)); break;
         case ButtonPress:
-            if (ev.xbutton.button == Button1) { g->dragging = 1; g->last_x = ev.xbutton.x; g->last_y = ev.xbutton.y; }
+            if (ev.xbutton.button == Button1) {
+                g->dragging = 1; g->moved = 0;
+                g->last_x = g->press_x = ev.xbutton.x;
+                g->last_y = g->press_y = ev.xbutton.y;
+            }
             else if (ev.xbutton.button == Button4) g->acc.scroll += 1.0f;
             else if (ev.xbutton.button == Button5) g->acc.scroll -= 1.0f;
             break;
         case ButtonRelease:
-            if (ev.xbutton.button == Button1) g->dragging = 0;
+            if (ev.xbutton.button == Button1) {
+                g->dragging = 0;
+                if (!g->moved) {           /* a click, not a drag -> pick */
+                    g->acc.click = 1;
+                    g->acc.click_x = (float)ev.xbutton.x;
+                    g->acc.click_y = (float)ev.xbutton.y;
+                }
+            }
             break;
         case MotionNotify:
             if (g->dragging) {
                 g->acc.dx += (float)(ev.xmotion.x - g->last_x);
                 g->acc.dy += (float)(ev.xmotion.y - g->last_y);
                 g->last_x = ev.xmotion.x; g->last_y = ev.xmotion.y;
+                if (abs(ev.xmotion.x - g->press_x) + abs(ev.xmotion.y - g->press_y) > 4) g->moved = 1;
             }
             break;
         default: break;
