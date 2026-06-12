@@ -79,17 +79,18 @@ static void gauge(Hud *h, UI *u, float cx, float cy, float rad,
     ui_text(u, h->f_small, cx-lw*0.5f, cy+12, C_GREY, label);
 }
 
-/* small horizontal bar meter */
-static void meter(Hud *h, UI *u, float x, float y, float w, const char *label,
-                  float v01, UIColor col, const char *vtext) {
-    ui_text(u, h->f_small, x, y, C_GREY, label);
-    float vw = ui_text_measure(h->f_small, vtext);
-    ui_text(u, h->f_small, x+w-vw, y, col, vtext);
-    float by = y + 15;
-    ui_rect(u, x, by, w, 5, ui_rgba(0.12f,0.18f,0.24f,1.0f));
-    if (v01 < 0) v01 = 0;
-    if (v01 > 1) v01 = 1;
-    ui_rect(u, x, by, w*v01, 5, col);
+/* compact gauge with a small centre value (for the metrics grid) */
+static void mini_gauge(Hud *h, UI *u, float cx, float cy, float rad,
+                       float value01, UIColor col, const char *vtext, const char *label) {
+    const float A0 = 4.18879f, SPAN = -5.23599f;
+    if (value01 < 0) value01 = 0;
+    if (value01 > 1) value01 = 1;
+    ui_arc(u, cx, cy, rad, A0, A0+SPAN, 4.0f, ui_rgba(0.13f,0.20f,0.27f,1.0f));
+    ui_arc(u, cx, cy, rad, A0, A0+SPAN*value01, 4.0f, col);
+    float bw = ui_text_measure(h->f_body, vtext);
+    ui_text(u, h->f_body, cx-bw*0.5f, cy-10, C_WHITE, vtext);
+    float lw = ui_text_measure(h->f_small, label);
+    ui_text(u, h->f_small, cx-lw*0.5f, cy+rad+4, C_GREY, label);
 }
 
 /* time-series plot from a ring buffer (newest at head-1) */
@@ -200,27 +201,29 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
 
     /* ===== right column ===== */
     float rw = 320, rxp = (float)W - rw - 14, ryp = 52;
-    float my = panel(h, u, rxp, ryp, rw, 224, "LIVE NETWORK PERFORMANCE");
+    float my = panel(h, u, rxp, ryp, rw, 250, "LIVE NETWORK PERFORMANCE");
     /* big latency gauge (show ms, or seconds when large) */
     float lat_ms = snap->avg_delay_s * 1000.0f;
     float lat01 = lat_ms / 80000.0f;           /* scale: 80 s -> full sweep */
     if (lat_ms > 9999.0f) snprintf(buf, sizeof buf, "%.1fs", snap->avg_delay_s);
     else                  snprintf(buf, sizeof buf, "%.0f", lat_ms);
-    gauge(h, u, rxp+72, my+74, 56, lat01, C_CYAN, buf, "AVG DELAY");
-    /* meters on the right of the gauge */
-    float mx = rxp+150, mw = 150;
-    meter(h, u, mx, my+18, mw, "DELIVERY",  snap->delivery_ratio,
-          snap->delivery_ratio>0.5f?C_GREEN:C_AMBER,
-          (snprintf(buf,sizeof buf,"%.0f%%",snap->delivery_ratio*100.0f),buf));
-    char b2[32]; snprintf(b2,sizeof b2,"%.1f%%",snap->link_util*100.0f);
-    meter(h, u, mx, my+54, mw, "LINK UTIL", snap->link_util*4.0f, C_CYAN, b2);
-    char b3[32]; snprintf(b3,sizeof b3,"%.1f",snap->avg_hops);
-    meter(h, u, mx, my+90, mw, "AVG HOPS", snap->avg_hops/12.0f, C_AMBER, b3);
-    char b4[32]; snprintf(b4,sizeof b4,"%u",snap->link_count);
-    meter(h, u, mx, my+126, mw, "ACTIVE LINKS", (float)snap->link_count/400.0f, C_GREEN, b4);
+    gauge(h, u, rxp+70, my+82, 52, lat01, C_CYAN, buf, "AVG DELAY");
+
+    /* 2x2 grid of mini gauges */
+    float gx0 = rxp+168, gx1 = rxp+262, gr0 = my+44, gr1 = my+150, mr = 32;
+    char b1[32], b2[32], b3[32], b4[32];
+    snprintf(b1,sizeof b1,"%.0f%%", snap->delivery_ratio*100.0f);
+    mini_gauge(h, u, gx0, gr0, mr, snap->delivery_ratio,
+               snap->delivery_ratio>0.5f?C_GREEN:C_AMBER, b1, "DELIVERY");
+    snprintf(b2,sizeof b2,"%.1f%%", snap->link_util*100.0f);
+    mini_gauge(h, u, gx1, gr0, mr, snap->link_util*4.0f, C_CYAN, b2, "LINK UTIL");
+    snprintf(b3,sizeof b3,"%.1f", snap->avg_hops);
+    mini_gauge(h, u, gx0, gr1, mr, snap->avg_hops/12.0f, C_AMBER, b3, "AVG HOPS");
+    snprintf(b4,sizeof b4,"%u", snap->link_count);
+    mini_gauge(h, u, gx1, gr1, mr, (float)snap->link_count/400.0f, C_GREEN, b4, "LINKS");
 
     /* simulation control */
-    float cy2 = ryp + 236;
+    float cy2 = ryp + 262;
     float ccy = panel(h, u, rxp, cy2, rw, 120, "SIMULATION CONTROL");
     row(h,u,rxp+14,ccy,rw-28,"STATE", paused?"PAUSED":"RUNNING", paused?C_AMBER:C_GREEN);
     row(h,u,rxp+14,ccy+22,rw-28,"ROUTING", route_dv?"DISTANCE-VECTOR":"DIJKSTRA", C_WHITE);

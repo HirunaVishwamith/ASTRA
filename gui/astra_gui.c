@@ -160,6 +160,7 @@ int main(int argc, char **argv) {
 
         if (!glctx_swap_and_poll(c) || in.quit) running = 0;
 
+        nap_ms(8);   /* ~120 Hz cap; lets the sim thread pace the data */
         if (selftest) {
             if (++frames >= selftest) {
                 Image im = {0};
@@ -168,8 +169,6 @@ int main(int argc, char **argv) {
                 image_free(&im);
                 running = 0;
             }
-        } else {
-            nap_ms(8);   /* ~120 Hz cap; sim thread paces the data */
         }
     }
 

@@ -19,6 +19,7 @@
 #define SPH_STACKS    96
 #define SPH_SLICES    192
 #define N_STARS       2600
+#define TRAIL_LEN     80
 #define EARTH_TEX_PATH "img/earth_texture.jpg"
 
 /* ---- shaders ------------------------------------------------------------- */
@@ -106,23 +107,40 @@ static const char *PT_FS =
     "  float a=smoothstep(0.25,0.0,r2); vec3 c=mix(vec3(1.0),vcol,smoothstep(0.0,0.12,r2));\n"
     "  frag=vec4(c, a); }\n";
 
+static const char *TRAIL_VS =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 pos; layout(location=1) in vec4 col;\n"
+    "uniform mat4 uMVP; out vec4 vcol;\n"
+    "void main(){ vcol=col; gl_Position=uMVP*vec4(pos,1.0); }\n";
+static const char *TRAIL_FS =
+    "#version 330 core\n"
+    "in vec4 vcol; out vec4 frag; void main(){ frag=vcol; }\n";
+
 /* ---- renderer state ------------------------------------------------------ */
 struct Renderer {
     int w, h;
-    GLuint globe_prog, atmo_prog, star_prog, line_prog, pt_prog;
+    GLuint globe_prog, atmo_prog, star_prog, line_prog, pt_prog, trail_prog;
     GLint  g_mvp, g_scale, g_tex, g_hastex, g_sun, g_cam;
     GLint  a_mvp, a_scale, a_sun, a_cam;
-    GLint  s_vp, l_mvp, p_mvp, p_scale;
+    GLint  s_vp, l_mvp, p_mvp, p_scale, t_mvp;
 
     GLuint globe_vao, globe_vbo, globe_ebo; int globe_index_count;
     GLuint star_vao, star_vbo; int star_count;
     GLuint line_vao, line_vbo;
     GLuint pt_vao, pt_vbo;
+    GLuint trail_vao, trail_vbo;
     GLuint earth_tex; int has_tex;
 
     fv3   *node_pos;
     float *line_buf;
     float *pt_buf;
+
+    /* per-satellite orbit trail history (ring of recent ECI-km positions) */
+    fv3      *trail;     /* [sat*TRAIL_LEN + slot] */
+    uint16_t *tfill;     /* samples held per sat   */
+    float    *trail_buf; /* scratch verts: pos3 + rgba4 */
+    int       thead;
+    uint64_t  last_trail_frame;
 };
 
 /* ---- sphere mesh (position + equirectangular uv) ------------------------- */
@@ -216,7 +234,8 @@ Renderer *render_create(int w, int h) {
     r->star_prog  = shader_build(STAR_VS, STAR_FS);
     r->line_prog  = shader_build(LINE_VS, LINE_FS);
     r->pt_prog    = shader_build(PT_VS, PT_FS);
-    if (!r->globe_prog || !r->atmo_prog || !r->star_prog || !r->line_prog || !r->pt_prog) { free(r); return NULL; }
+    r->trail_prog = shader_build(TRAIL_VS, TRAIL_FS);
+    if (!r->globe_prog || !r->atmo_prog || !r->star_prog || !r->line_prog || !r->pt_prog || !r->trail_prog) { free(r); return NULL; }
     r->g_mvp=glGetUniformLocation(r->globe_prog,"uMVP"); r->g_scale=glGetUniformLocation(r->globe_prog,"uScale");
     r->g_tex=glGetUniformLocation(r->globe_prog,"uTex"); r->g_hastex=glGetUniformLocation(r->globe_prog,"uHasTex");
     r->g_sun=glGetUniformLocation(r->globe_prog,"uSun"); r->g_cam=glGetUniformLocation(r->globe_prog,"uCam");
@@ -225,21 +244,35 @@ Renderer *render_create(int w, int h) {
     r->s_vp=glGetUniformLocation(r->star_prog,"uVP");
     r->l_mvp=glGetUniformLocation(r->line_prog,"uMVP");
     r->p_mvp=glGetUniformLocation(r->pt_prog,"uMVP"); r->p_scale=glGetUniformLocation(r->pt_prog,"uScale");
+    r->t_mvp=glGetUniformLocation(r->trail_prog,"uMVP");
 
     build_globe(r);
     build_stars(r);
     load_earth_texture(r);
     dyn_vertbuf(&r->line_vao, &r->line_vbo, (size_t)ASTRA_MAX_LINKS*2u*6u*sizeof(float));
     dyn_vertbuf(&r->pt_vao,   &r->pt_vbo,   (size_t)ASTRA_MAX_NODES*6u*sizeof(float));
+
+    /* trail VAO: pos(3) + rgba(4) */
+    size_t trail_verts = (size_t)ASTRA_MAX_SATS * (TRAIL_LEN-1) * 2u;
+    glGenVertexArrays(1, &r->trail_vao); glBindVertexArray(r->trail_vao);
+    glGenBuffers(1, &r->trail_vbo); glBindBuffer(GL_ARRAY_BUFFER, r->trail_vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr_t)(trail_verts*7u*sizeof(float)), NULL, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7*sizeof(float),(void*)0);
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7*sizeof(float),(void*)(3*sizeof(float)));
+
     r->node_pos = (fv3 *)malloc((size_t)ASTRA_MAX_NODES*sizeof(fv3));
     r->line_buf = (float *)malloc((size_t)ASTRA_MAX_LINKS*2u*6u*sizeof(float));
     r->pt_buf   = (float *)malloc((size_t)ASTRA_MAX_NODES*6u*sizeof(float));
+    r->trail    = (fv3 *)calloc((size_t)ASTRA_MAX_SATS*TRAIL_LEN, sizeof(fv3));
+    r->tfill    = (uint16_t *)calloc(ASTRA_MAX_SATS, sizeof(uint16_t));
+    r->trail_buf= (float *)malloc(trail_verts*7u*sizeof(float));
     return r;
 }
 
 void render_destroy(Renderer *r) {
     if (!r) return;
     free(r->node_pos); free(r->line_buf); free(r->pt_buf);
+    free(r->trail); free(r->tfill); free(r->trail_buf);
     free(r);
 }
 void render_resize(Renderer *r, int w, int h) { r->w = w; r->h = h; }
@@ -260,6 +293,49 @@ static void link_color(int up, float util, float *c) {
     c[0] = 0.10f + 0.95f*u;
     c[1] = 0.65f - 0.30f*u;
     c[2] = 0.70f*(1.0f - u) + 0.20f;
+}
+
+/* Append the current satellite positions to each trail (once per sim frame),
+ * then draw the trails as fading polylines. Called after the globe so trails
+ * are depth-occluded by the Earth. */
+static void update_and_draw_trails(Renderer *r, const RenderSnapshot *snap, const float *mvp) {
+    if (snap->frame_id != r->last_trail_frame) {
+        r->last_trail_frame = snap->frame_id;
+        int slot = r->thead;
+        for (uint32_t i = 0; i < snap->sat_count; ++i) {
+            if (snap->sat[i].alive) {
+                r->trail[i*TRAIL_LEN + slot] = fv3_make((float)snap->sat[i].r.x*WORLD_SCALE,
+                    (float)snap->sat[i].r.y*WORLD_SCALE, (float)snap->sat[i].r.z*WORLD_SCALE);
+                if (r->tfill[i] < TRAIL_LEN) r->tfill[i]++;
+            } else r->tfill[i] = 0;
+        }
+        r->thead = (r->thead + 1) % TRAIL_LEN;
+    }
+
+    int nv = 0;
+    for (uint32_t i = 0; i < snap->sat_count; ++i) {
+        if (!snap->sat[i].alive || r->tfill[i] < 2) continue;
+        int fill = r->tfill[i];
+        for (int k = 0; k < fill-1; ++k) {
+            int s0 = (r->thead-1-k     + 2*TRAIL_LEN) % TRAIL_LEN;
+            int s1 = (r->thead-1-(k+1) + 2*TRAIL_LEN) % TRAIL_LEN;
+            fv3 a = r->trail[i*TRAIL_LEN+s0], b = r->trail[i*TRAIL_LEN+s1];
+            float a0 = (1.0f - (float)k/(float)(fill-1)) * 0.60f;
+            float a1 = (1.0f - (float)(k+1)/(float)(fill-1)) * 0.60f;
+            float *p = &r->trail_buf[nv*7];
+            p[0]=a.x;p[1]=a.y;p[2]=a.z; p[3]=0.35f;p[4]=0.72f;p[5]=1.0f;p[6]=a0;
+            p[7]=b.x;p[8]=b.y;p[9]=b.z; p[10]=0.35f;p[11]=0.72f;p[12]=1.0f;p[13]=a1;
+            nv += 2;
+        }
+    }
+    if (nv == 0) return;
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(r->trail_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r->trail_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)((size_t)nv*7u*sizeof(float)), r->trail_buf);
+    glUseProgram(r->trail_prog);
+    glUniformMatrix4fv(r->t_mvp, 1, GL_FALSE, mvp);
+    glDrawArrays(GL_LINES, 0, nv);
 }
 
 void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
@@ -319,6 +395,9 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
         if (gid < ASTRA_MAX_NODES)
             r->node_pos[gid] = fv3_make((float)snap->gs[i].r.x*WORLD_SCALE,(float)snap->gs[i].r.y*WORLD_SCALE,(float)snap->gs[i].r.z*WORLD_SCALE);
     }
+
+    /* ---- orbit trails (depth-tested, no write) ---- */
+    update_and_draw_trails(r, snap, mvp.m);
 
     /* ---- links (additive glow, occluded by globe) ---- */
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
