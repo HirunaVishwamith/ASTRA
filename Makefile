@@ -33,11 +33,16 @@ VIZ_LIBS := -lEGL -lGL -lX11 -lpng -lm
 GUI_SRC  := $(wildcard gui/*.c)
 GUI_BIN  := $(patsubst gui/%.c,$(BUILD)/%,$(GUI_SRC))
 
-.PHONY: all test apps gui clean
+.PHONY: all test viz-test apps gui clean
 .SECONDARY: $(CORE_OBJ) $(VIZ_OBJ)        # keep object files; don't auto-delete
 all: $(CORE_OBJ) $(APP_BIN)
 apps: $(APP_BIN)
 gui: $(GUI_BIN)
+
+# Visual-correctness regression (needs a GL-capable environment: EGL/Mesa).
+# Kept out of `make test` so the core suite stays GPU-free / portable.
+viz-test: $(BUILD)/viz_golden
+	$(BUILD)/viz_golden
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
