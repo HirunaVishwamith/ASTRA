@@ -29,7 +29,8 @@ APP_BIN := $(patsubst apps/%.c,$(BUILD)/%,$(APP_SRC))
 # (gui/*.c). Uses GLX/X11 + EGL directly (no GLFW). PNG via libpng.
 VIZ_SRC  := $(wildcard viz/*.c)
 VIZ_OBJ  := $(patsubst viz/%.c,$(BUILD)/viz_%.o,$(VIZ_SRC))
-VIZ_LIBS := -lEGL -lGL -lX11 -lpng -ljpeg -lm
+VIZ_CFLAGS := $(shell pkg-config --cflags freetype2 2>/dev/null)
+VIZ_LIBS := -lEGL -lGL -lX11 -lpng -ljpeg -lfreetype -lm
 GUI_SRC  := $(wildcard gui/*.c)
 GUI_BIN  := $(patsubst gui/%.c,$(BUILD)/%,$(GUI_SRC))
 
@@ -48,7 +49,7 @@ $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/viz_%.o: viz/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -Iviz -c $< -o $@
+	$(CC) $(CFLAGS) -Iviz $(VIZ_CFLAGS) -c $< -o $@
 
 $(BUILD)/%: tests/%.c $(CORE_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $< $(CORE_OBJ) -o $@ $(LDLIBS)
