@@ -30,7 +30,7 @@ typedef struct {
 /* ---- Immutable render snapshot: the ONLY thing the render thread reads ---- */
 typedef struct { vec3 r; uint8_t alive; }                              SnapSat;
 typedef struct { node_id u, v; uint8_t up; float util, latency_ms, dist_km, bw_mbps; } SnapLink;
-typedef struct { node_id gid, best_sat; double lat_rad, lon_rad; }     SnapGS;
+typedef struct { node_id gid, best_sat; double lat_rad, lon_rad; vec3 r; } SnapGS;
 
 typedef struct {
     uint64_t frame_id;

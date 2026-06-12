@@ -149,6 +149,9 @@ static void publish(SimState *s) {
         snap->gs[i].best_sat = s->best_sat[i];
         snap->gs[i].lat_rad = s->gs[i].lat_rad;
         snap->gs[i].lon_rad = s->gs[i].lon_rad;
+        /* world (ECI) position of the station at this epoch, for rendering */
+        vec3 ecef = astra_gs_ecef(&s->gs[i], s->earth_r);
+        snap->gs[i].r = astra_ecef_to_eci(ecef, s->sim_time_s, 0.0);
     }
 
     snap->link_count = s->graph.link_count;
