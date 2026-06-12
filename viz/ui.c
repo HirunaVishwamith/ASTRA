@@ -176,6 +176,17 @@ void ui_arc(UI *u, float cx, float cy, float rad, float a0, float a1, float t, U
     }
 }
 
+void ui_circle(UI *u, float cx, float cy, float rad, UIColor c) {
+    int seg = (int)(rad * 1.2f) + 8;
+    float px = cx + rad, py = cy;
+    for (int i = 1; i <= seg; ++i) {
+        float a = 6.28318530718f*(float)i/(float)seg;
+        float x = cx + rad*cosf(a), y = cy + rad*sinf(a);
+        ui_tri(u, cx, cy, px, py, x, y, c);
+        px = x; py = y;
+    }
+}
+
 static TextBatch *batch_for(UI *u, const UIFont *f) {
     for (int i = 0; i < u->ntb; ++i) if (u->tb[i].f == f) return &u->tb[i];
     if (u->ntb >= MAX_FONTS) return &u->tb[0];

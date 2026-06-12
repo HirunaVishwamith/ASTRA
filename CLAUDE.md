@@ -98,24 +98,41 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   via `eglGetProcAddress` / `glXGetProcAddressARB`. GL 1.1 calls use `-lGL`.
 - `viz/shader`, `viz/mat4`, `viz/image` (libpng + libjpeg) — helpers.
 - `viz/render.c` — the 3D scene: **photoreal Earth** (day-map texture from
-  `img/earth_texture.jpg`, per-vertex equirectangular UVs, day/night terminator
-  with faked city lights, ocean specular, additive atmosphere limb, starfield),
-  ISL/ground links coloured by utilisation (idle=cool, loaded=hot, down=dim red,
-  depth-occluded by the globe), satellites + ground stations as glowing points.
-  Consumes a `RenderSnapshot` only. `render_view_proj()` exposes the frame MVP
-  for screen projection (picking / callouts).
+  `img/earth_texture.jpg`, equirectangular UVs on an **ECEF-authored mesh**,
+  day/night terminator with faked city lights, ocean specular, additive
+  atmosphere limb, starfield), ISL/ground links coloured by utilisation
+  (idle=cool, loaded=hot, down=dim red, depth-occluded by the globe),
+  satellites coloured **by orbital plane** (dead = dim red, selected = bright
+  marker), the snapshot's **active route as a glowing gold arc** with an
+  animated packet dot. Consumes a `RenderSnapshot` only. `render_view_proj()`
+  exposes the frame MVP for screen projection (picking / callouts).
+  **Frame accuracy:** ECI z (pole) maps to render up via (x,y,z)→(x,z,−y) and
+  the globe spins by `ASTRA_OMEGA_EARTH * sim_time` (the exact rotation
+  `astra_ecef_to_eci` uses), so ground stations sit on the correct geography
+  and the terminator sweeps at the true rate.
 - `viz/ui.{c,h}` — batched immediate-mode 2D overlay: rects, outlines, thick
-  lines, arcs, triangles in one shape draw; **FreeType** text via per-font R8
-  glyph atlases (`ui_font_load(ttf, px)`). Pixel coords, RGBA, depth off.
-- `viz/hud.{c,h}` — the **mission-control dashboard** drawn over the 3D scene
-  from a `RenderSnapshot`: top status bar, GLOBAL ASSET LIST, SELECTED ASSET,
-  LIVE NETWORK PERFORMANCE (avg-delay gauge + bar meters), SIMULATION CONTROL,
-  bottom history plots, and a 3D selection callout. Pure presentation.
+  lines, arcs, filled circles, triangles in one shape draw; **FreeType** text
+  via per-font R8 glyph atlases (`ui_font_load(ttf, px)`). Pixel coords, RGBA,
+  depth off. ASCII 32–127 only — no `—`/`→`/`·` in HUD strings.
+- `viz/hud.{c,h}` — the **mission-control console** drawn over the 3D scene
+  from a `RenderSnapshot` (layout mirrors `realistic_interface.png`): top
+  status bar (TOTAL OBJECTS / COVERAGE / ACTIVE NETWORK + clock), GLOBAL ASSET
+  LIST (filter chips + clickable rows), SELECTED ASSET (live altitude /
+  velocity / inclination / geodetic lat-lon, network role, aggregate BW, link
+  signal, **VIEW ORBITAL ELEMENTS** toggle computing osculating COEs from r,v),
+  NETWORK PERFORMANCE (Space Resilience Index + 6 sparkline metric cells),
+  SIMULATION CONTROL & CONFIG (routing chips MIN LATENCY / MIN HOPS / DISTANCE
+  VECTOR, speed −/+, PAUSE, STRIKE, REBOOT), ACTIVE ROUTE (hop-by-hop list +
+  stream-latency sparkline), plus station labels, a route callout, selection
+  ring, and a plane-colour legend in the viewport. Interaction is
+  immediate-mode: pass the click in `HudInput`, apply the returned
+  `HudActions` (`consumed=1` ⇒ the click was on chrome, skip 3D picking).
 - `gui/astra_render` — headless: run N steps, render snapshot → PNG.
 - `gui/astra_gui` — interactive viewer (sim on its own realtime thread + HUD).
-  Controls: drag = orbit, wheel = zoom, **left-click = select satellite**,
-  Up/Down (or `[` `]`) = walk the asset list, **S** = strike selected, **R** =
-  reboot, **P** = pause, **M** = toggle routing, **Q/Esc** = quit.
+  Controls: drag = orbit, wheel = zoom, **left-click = select satellite or
+  operate any dashboard control**, Up/Down (or `[` `]`) = walk the asset list,
+  **S** = strike selected, **R** = reboot, **P** = pause, **M** = toggle
+  routing, **Q/Esc** = quit. Default window 1600×900.
   `--selftest N --shot out.png` renders N frames headlessly for validation.
 - `gui/viz_golden` — visual-correctness test (render determinism + golden).
 - `gui/viz_uitest` — UI-framework smoke test (panels/gauge/plot/text → PNG).
@@ -185,7 +202,10 @@ Quick looks:
   throughout routing/traffic/graph.
 - The renderer must stay a **pure function of `RenderSnapshot`** — never reach
   into sim state or recompute physics (e.g. GS world positions are precomputed
-  into the snapshot in `publish`).
+  into the snapshot in `publish`). The snapshot also carries per-sat velocity
+  + plane/slot, GS names, and a `SnapRoute` (the live next-hop walk between
+  the last two ground stations, New York → Tokyo by default) so the HUD's
+  ACTIVE ROUTE panel and the renderer's gold arc stay snapshot-driven.
 - Zero per-step allocation in the hot path (packet pool, CSR scratch, fixed
   buffers). Keep it that way.
 - After changing core numerics, run `make test`; after changing the renderer,
@@ -199,5 +219,12 @@ Quick looks:
 - Physics realism: J2 nodal precession, drag, WGS-84 geodetic, GMST, 2nd shell.
 - RF link budget (Friis/Shannon) replacing the inverse-square heuristic.
 - Ground-to-ground file transfer with live throughput + bottleneck highlight.
-- Renderer polish: Earth texture (img/earth_texture.jpg), orbital ribbons, HUD,
-  path highlight; vendor GLFW only if a portability need arises.
+- HUD polish: typed search in the asset list (needs key-event plumbing in
+  glctx), hover states, route endpoint picker; vendor GLFW only if a
+  portability need arises.
+
+
+claude --resume e8601f71-a7ef-4e96-a6df-8bed95bfdf42
+
+claude --resume 2f54b738-ee8e-465c-8638-6903c4fa8790
+

@@ -28,9 +28,24 @@ typedef struct {
 } SatField;
 
 /* ---- Immutable render snapshot: the ONLY thing the render thread reads ---- */
-typedef struct { vec3 r; uint8_t alive; }                              SnapSat;
+typedef struct { vec3 r, v; uint8_t alive; uint16_t plane, slot; }     SnapSat;
 typedef struct { node_id u, v; uint8_t up; float util, latency_ms, dist_km, bw_mbps; } SnapLink;
-typedef struct { node_id gid, best_sat; double lat_rad, lon_rad; vec3 r; } SnapGS;
+typedef struct { node_id gid, best_sat; double lat_rad, lon_rad; vec3 r; char name[24]; } SnapGS;
+
+/* Showcase route (ground->ground walk of the live next-hop table), published
+ * so the HUD's ACTIVE ROUTE panel + the renderer's route arc stay pure
+ * functions of the snapshot. hop_ms[i] is the latency of the link into
+ * node[i] (hop_ms[0] = 0). */
+#define ASTRA_SNAP_ROUTE_MAX 24u
+typedef struct {
+    uint8_t  valid;
+    node_id  src_gid, dst_gid;
+    uint32_t count;                          /* nodes incl. both endpoints */
+    node_id  node  [ASTRA_SNAP_ROUTE_MAX];
+    float    hop_ms[ASTRA_SNAP_ROUTE_MAX];
+    float    total_ms;
+    float    min_bw_mbps;                    /* bottleneck bandwidth       */
+} SnapRoute;
 
 typedef struct {
     uint64_t frame_id;
@@ -40,6 +55,7 @@ typedef struct {
     SnapSat  sat [ASTRA_MAX_SATS];
     SnapLink link[ASTRA_MAX_LINKS];
     SnapGS   gs  [ASTRA_MAX_GROUND];
+    SnapRoute route;
     float    delivery_ratio, avg_delay_s, avg_hops, link_util;
     uint32_t route_updates;
 } RenderSnapshot;

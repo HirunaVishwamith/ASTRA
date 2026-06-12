@@ -19,8 +19,10 @@ Renderer *render_create(int w, int h);
 void      render_destroy(Renderer *r);
 void      render_resize(Renderer *r, int w, int h);   /* viewport/aspect only */
 
-/* Draw one frame into the currently-bound framebuffer. */
-void      render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam);
+/* Draw one frame into the currently-bound framebuffer. selected_sat gets a
+ * bright marker (-1 = none). */
+void      render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam,
+                       int selected_sat);
 
 /* The view-projection matrix (column-major, 16 floats) for a camera at (w,h).
  * Same transform render_frame uses, so callers can project world points to

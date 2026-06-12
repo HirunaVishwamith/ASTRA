@@ -27,6 +27,8 @@ void  ui_rect_outline(UI *u, float x, float y, float w, float h, float t, UIColo
 void  ui_line(UI *u, float x0, float y0, float x1, float y1, float t, UIColor c);
 /* arc from a0..a1 radians (0 = +x, CCW), radius rad, stroke t */
 void  ui_arc(UI *u, float cx, float cy, float rad, float a0, float a1, float t, UIColor c);
+/* filled circle (triangle fan) */
+void  ui_circle(UI *u, float cx, float cy, float rad, UIColor c);
 void  ui_tri(UI *u, float x0,float y0,float x1,float y1,float x2,float y2, UIColor c);
 
 /* text: top-left at (x,y). Returns advance width in px. */

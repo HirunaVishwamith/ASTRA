@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     Renderer *r = render_create(W, H);
     if (!r) { fprintf(stderr, "renderer init failed\n"); return 1; }
 
-    render_frame(r, snap, cam);
+    render_frame(r, snap, cam, -1);
     glFinish();
 
     Image im = {0};

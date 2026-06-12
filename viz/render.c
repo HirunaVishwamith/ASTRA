@@ -23,14 +23,17 @@
 #define EARTH_TEX_PATH "img/earth_texture.jpg"
 
 /* ---- shaders ------------------------------------------------------------- */
+/* Globe vertices are authored in ECEF axes (z = north pole, x = lon 0) so the
+ * texture maps by lat/lon directly; uModel carries Earth rotation + the
+ * ECEF->render axis change. */
 static const char *GLOBE_VS =
     "#version 330 core\n"
     "layout(location=0) in vec3 pos;\n"
     "layout(location=1) in vec2 uv;\n"
-    "uniform mat4 uMVP; uniform float uScale;\n"
+    "uniform mat4 uMVP; uniform mat4 uModel; uniform float uScale;\n"
     "out vec3 vN; out vec3 vWorld; out vec2 vUV;\n"
-    "void main(){ vN=normalize(pos); vUV=uv; vec3 p=pos*uScale; vWorld=p;\n"
-    "  gl_Position=uMVP*vec4(p,1.0); }\n";
+    "void main(){ vN=normalize(mat3(uModel)*pos); vUV=uv; vec3 p=pos*uScale;\n"
+    "  vWorld=(uModel*vec4(p,1.0)).xyz; gl_Position=uMVP*vec4(p,1.0); }\n";
 static const char *GLOBE_FS =
     "#version 330 core\n"
     "in vec3 vN; in vec3 vWorld; in vec2 vUV; out vec4 frag;\n"
@@ -91,8 +94,8 @@ static const char *LINE_VS =
     "void main(){ vcol=col; gl_Position=uMVP*vec4(pos,1.0); }\n";
 static const char *LINE_FS =
     "#version 330 core\n"
-    "in vec3 vcol; out vec4 frag;\n"
-    "void main(){ frag=vec4(vcol, 0.55); }\n";
+    "in vec3 vcol; out vec4 frag; uniform float uAlpha;\n"
+    "void main(){ frag=vec4(vcol, uAlpha); }\n";
 
 static const char *PT_VS =
     "#version 330 core\n"
@@ -120,9 +123,9 @@ static const char *TRAIL_FS =
 struct Renderer {
     int w, h;
     GLuint globe_prog, atmo_prog, star_prog, line_prog, pt_prog, trail_prog;
-    GLint  g_mvp, g_scale, g_tex, g_hastex, g_sun, g_cam;
-    GLint  a_mvp, a_scale, a_sun, a_cam;
-    GLint  s_vp, l_mvp, p_mvp, p_scale, t_mvp;
+    GLint  g_mvp, g_model, g_scale, g_tex, g_hastex, g_sun, g_cam;
+    GLint  a_mvp, a_model, a_scale, a_sun, a_cam;
+    GLint  s_vp, l_mvp, l_alpha, p_mvp, p_scale, t_mvp;
 
     GLuint globe_vao, globe_vbo, globe_ebo; int globe_index_count;
     GLuint star_vao, star_vbo; int star_count;
@@ -143,18 +146,20 @@ struct Renderer {
     uint64_t  last_trail_frame;
 };
 
-/* ---- sphere mesh (position + equirectangular uv) ------------------------- */
+/* ---- sphere mesh in ECEF axes (z = pole), equirectangular uv -------------
+ * u=0 is longitude 180 W (left edge of a standard Earth map), v=0 the north
+ * pole, so geodetic lat/lon land on the correct pixels of the texture. */
 static void build_globe(Renderer *r) {
     int nv = (SPH_STACKS + 1) * (SPH_SLICES + 1);
     float *vtx = (float *)malloc((size_t)nv * 5u * sizeof(float));
     int vi = 0;
     for (int i = 0; i <= SPH_STACKS; ++i) {
         float v = (float)i / SPH_STACKS;
-        float phi = v * (float)M_PI;
+        float lat = (0.5f - v) * (float)M_PI;
         for (int j = 0; j <= SPH_SLICES; ++j) {
             float u = (float)j / SPH_SLICES;
-            float th = u * 2.0f * (float)M_PI;
-            float x = sinf(phi) * cosf(th), y = cosf(phi), z = sinf(phi) * sinf(th);
+            float lon = (u - 0.5f) * 2.0f * (float)M_PI;
+            float x = cosf(lat)*cosf(lon), y = cosf(lat)*sinf(lon), z = sinf(lat);
             vtx[vi++] = x*EARTH_R_WORLD; vtx[vi++] = y*EARTH_R_WORLD; vtx[vi++] = z*EARTH_R_WORLD;
             vtx[vi++] = u; vtx[vi++] = v;
         }
@@ -237,12 +242,15 @@ Renderer *render_create(int w, int h) {
     r->trail_prog = shader_build(TRAIL_VS, TRAIL_FS);
     if (!r->globe_prog || !r->atmo_prog || !r->star_prog || !r->line_prog || !r->pt_prog || !r->trail_prog) { free(r); return NULL; }
     r->g_mvp=glGetUniformLocation(r->globe_prog,"uMVP"); r->g_scale=glGetUniformLocation(r->globe_prog,"uScale");
+    r->g_model=glGetUniformLocation(r->globe_prog,"uModel");
     r->g_tex=glGetUniformLocation(r->globe_prog,"uTex"); r->g_hastex=glGetUniformLocation(r->globe_prog,"uHasTex");
     r->g_sun=glGetUniformLocation(r->globe_prog,"uSun"); r->g_cam=glGetUniformLocation(r->globe_prog,"uCam");
     r->a_mvp=glGetUniformLocation(r->atmo_prog,"uMVP"); r->a_scale=glGetUniformLocation(r->atmo_prog,"uScale");
+    r->a_model=glGetUniformLocation(r->atmo_prog,"uModel");
     r->a_sun=glGetUniformLocation(r->atmo_prog,"uSun"); r->a_cam=glGetUniformLocation(r->atmo_prog,"uCam");
     r->s_vp=glGetUniformLocation(r->star_prog,"uVP");
     r->l_mvp=glGetUniformLocation(r->line_prog,"uMVP");
+    r->l_alpha=glGetUniformLocation(r->line_prog,"uAlpha");
     r->p_mvp=glGetUniformLocation(r->pt_prog,"uMVP"); r->p_scale=glGetUniformLocation(r->pt_prog,"uScale");
     r->t_mvp=glGetUniformLocation(r->trail_prog,"uMVP");
 
@@ -295,6 +303,32 @@ static void link_color(int up, float util, float *c) {
     c[2] = 0.70f*(1.0f - u) + 0.20f;
 }
 
+/* ECI (z = pole) -> render world (y = up): (x, y, z) -> (x, z, -y). */
+static inline fv3 eci_to_world(vec3 r) {
+    return fv3_make((float)r.x*WORLD_SCALE, (float)r.z*WORLD_SCALE, (float)-r.y*WORLD_SCALE);
+}
+
+/* Earth model matrix: rotate ECEF by the true rotation angle (matches
+ * astra_ecef_to_eci), then the same axis change as eci_to_world. */
+static mat4 earth_model(double sim_time_s) {
+    float th = (float)fmod(ASTRA_OMEGA_EARTH * sim_time_s, 2.0*M_PI);
+    float c = cosf(th), s = sinf(th);
+    mat4 M = mat4_identity();
+    M.m[0]=c;  M.m[1]=0; M.m[2]=-s;     /* image of ECEF x */
+    M.m[4]=-s; M.m[5]=0; M.m[6]=-c;     /* image of ECEF y */
+    M.m[8]=0;  M.m[9]=1; M.m[10]=0;     /* image of ECEF z (pole -> up) */
+    return M;
+}
+
+/* satellite point colour by orbital plane (matches the HUD legend) */
+static const float PLANE_COL[6][3] = {
+    {0.36f,0.95f,0.62f}, {0.36f,0.80f,1.00f}, {1.00f,0.72f,0.30f},
+    {0.93f,0.47f,0.85f}, {0.55f,0.64f,1.00f}, {0.93f,0.90f,0.50f},
+};
+#define ROUTE_GOLD_R 1.00f
+#define ROUTE_GOLD_G 0.78f
+#define ROUTE_GOLD_B 0.25f
+
 /* Append the current satellite positions to each trail (once per sim frame),
  * then draw the trails as fading polylines. Called after the globe so trails
  * are depth-occluded by the Earth. */
@@ -304,8 +338,7 @@ static void update_and_draw_trails(Renderer *r, const RenderSnapshot *snap, cons
         int slot = r->thead;
         for (uint32_t i = 0; i < snap->sat_count; ++i) {
             if (snap->sat[i].alive) {
-                r->trail[i*TRAIL_LEN + slot] = fv3_make((float)snap->sat[i].r.x*WORLD_SCALE,
-                    (float)snap->sat[i].r.y*WORLD_SCALE, (float)snap->sat[i].r.z*WORLD_SCALE);
+                r->trail[i*TRAIL_LEN + slot] = eci_to_world(snap->sat[i].r);
                 if (r->tfill[i] < TRAIL_LEN) r->tfill[i]++;
             } else r->tfill[i] = 0;
         }
@@ -338,19 +371,21 @@ static void update_and_draw_trails(Renderer *r, const RenderSnapshot *snap, cons
     glDrawArrays(GL_LINES, 0, nv);
 }
 
-void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
+void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam, int selected_sat) {
     float ce=cosf(cam.el), se=sinf(cam.el), ca=cosf(cam.az), sa=sinf(cam.az);
     fv3 eye = { cam.dist*ce*ca, cam.dist*se, cam.dist*ce*sa };
     mat4 proj = mat4_perspective(cam.fov, (float)r->w/(float)r->h, 0.4f, 600.0f);
     mat4 view = mat4_look_at(eye, fv3_make(0,0,0), fv3_make(0,1,0));
     mat4 mvp  = mat4_mul(proj, view);
+    mat4 model = earth_model(snap->sim_time_s);
+    mat4 mvp_globe = mat4_mul(mvp, model);
     /* stars at infinity: view with translation removed */
     mat4 view_notrans = view; view_notrans.m[12]=view_notrans.m[13]=view_notrans.m[14]=0.0f;
     mat4 star_vp = mat4_mul(proj, view_notrans);
 
-    /* sun direction drifts with sim time so the terminator moves */
-    float sa2 = (float)(snap->sim_time_s * 0.0008);
-    fv3 sun = fv3_norm(fv3_make(cosf(sa2), 0.35f, sinf(sa2)));
+    /* sun fixed in inertial space (~June declination); the terminator sweeps
+     * the surface because the Earth itself rotates at the true rate */
+    fv3 sun = fv3_norm(fv3_make(0.917f, 0.398f, 0.0f));
 
     glViewport(0, 0, r->w, r->h);
     glClearColor(0.005f, 0.006f, 0.013f, 1.0f);
@@ -368,7 +403,8 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
     /* ---- globe ---- */
     glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE); glDisable(GL_BLEND);
     glUseProgram(r->globe_prog);
-    glUniformMatrix4fv(r->g_mvp, 1, GL_FALSE, mvp.m);
+    glUniformMatrix4fv(r->g_mvp, 1, GL_FALSE, mvp_globe.m);
+    glUniformMatrix4fv(r->g_model, 1, GL_FALSE, model.m);
     glUniform1f(r->g_scale, 1.0f);
     glUniform1i(r->g_hastex, r->has_tex);
     glUniform3f(r->g_sun, sun.x, sun.y, sun.z);
@@ -380,7 +416,8 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
     /* ---- atmosphere shell (additive, depth-tested, no write) ---- */
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
     glUseProgram(r->atmo_prog);
-    glUniformMatrix4fv(r->a_mvp, 1, GL_FALSE, mvp.m);
+    glUniformMatrix4fv(r->a_mvp, 1, GL_FALSE, mvp_globe.m);
+    glUniformMatrix4fv(r->a_model, 1, GL_FALSE, model.m);
     glUniform1f(r->a_scale, 1.035f);
     glUniform3f(r->a_sun, sun.x, sun.y, sun.z);
     glUniform3f(r->a_cam, eye.x, eye.y, eye.z);
@@ -389,11 +426,11 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
 
     /* node positions by id */
     for (uint32_t i = 0; i < snap->sat_count; ++i)
-        r->node_pos[i] = fv3_make((float)snap->sat[i].r.x*WORLD_SCALE,(float)snap->sat[i].r.y*WORLD_SCALE,(float)snap->sat[i].r.z*WORLD_SCALE);
+        r->node_pos[i] = eci_to_world(snap->sat[i].r);
     for (uint32_t i = 0; i < snap->gs_count; ++i) {
         node_id gid = snap->gs[i].gid;
         if (gid < ASTRA_MAX_NODES)
-            r->node_pos[gid] = fv3_make((float)snap->gs[i].r.x*WORLD_SCALE,(float)snap->gs[i].r.y*WORLD_SCALE,(float)snap->gs[i].r.z*WORLD_SCALE);
+            r->node_pos[gid] = eci_to_world(snap->gs[i].r);
     }
 
     /* ---- orbit trails (depth-tested, no write) ---- */
@@ -417,16 +454,51 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
         glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)((size_t)lv*6u*sizeof(float)), r->line_buf);
         glUseProgram(r->line_prog);
         glUniformMatrix4fv(r->l_mvp, 1, GL_FALSE, mvp.m);
+        glUniform1f(r->l_alpha, 0.30f);
         glDrawArrays(GL_LINES, 0, lv);
     }
 
-    /* ---- satellites ---- */
+    /* ---- active route: glowing gold arc over the constellation ---- */
+    const SnapRoute *rt = &snap->route;
+    uint8_t on_route[ASTRA_MAX_NODES];
+    memset(on_route, 0, sizeof(on_route));
+    if (rt->valid) {
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        int nv = 0;
+        for (uint32_t k = 0; k + 1 < rt->count; ++k) {
+            node_id u0 = rt->node[k], v0 = rt->node[k+1];
+            if (u0 >= ASTRA_MAX_NODES || v0 >= ASTRA_MAX_NODES) break;
+            on_route[u0] = on_route[v0] = 1;
+            fv3 a = r->node_pos[u0], b = r->node_pos[v0];
+            float *p = &r->line_buf[nv*6];
+            p[0]=a.x;p[1]=a.y;p[2]=a.z;p[3]=ROUTE_GOLD_R;p[4]=ROUTE_GOLD_G;p[5]=ROUTE_GOLD_B;
+            p[6]=b.x;p[7]=b.y;p[8]=b.z;p[9]=ROUTE_GOLD_R;p[10]=ROUTE_GOLD_G;p[11]=ROUTE_GOLD_B;
+            nv += 2;
+        }
+        if (nv > 0) {
+            glBindVertexArray(r->line_vao); glBindBuffer(GL_ARRAY_BUFFER, r->line_vbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)((size_t)nv*6u*sizeof(float)), r->line_buf);
+            glUseProgram(r->line_prog);
+            glUniformMatrix4fv(r->l_mvp, 1, GL_FALSE, mvp.m);
+            glUniform1f(r->l_alpha, 0.95f);
+            glDrawArrays(GL_LINES, 0, nv);   /* additive: drawn twice = glow */
+            glDrawArrays(GL_LINES, 0, nv);
+        }
+    }
+
+    /* ---- satellites (coloured by plane; gold on the active route) ---- */
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     int pv = 0;
     for (uint32_t i = 0; i < snap->sat_count; ++i) {
-        if (!snap->sat[i].alive) continue;
-        fv3 a=r->node_pos[i]; float *p=&r->pt_buf[pv*6];
-        p[0]=a.x;p[1]=a.y;p[2]=a.z;p[3]=0.80f;p[4]=0.93f;p[5]=1.0f; pv++;
+        fv3 a = r->node_pos[i]; float *p = &r->pt_buf[pv*6];
+        p[0]=a.x;p[1]=a.y;p[2]=a.z;
+        if (!snap->sat[i].alive)      { p[3]=0.55f; p[4]=0.12f; p[5]=0.10f; }
+        else if (on_route[i])         { p[3]=ROUTE_GOLD_R; p[4]=ROUTE_GOLD_G; p[5]=ROUTE_GOLD_B; }
+        else {
+            const float *c = PLANE_COL[snap->sat[i].plane % 6u];
+            p[3]=c[0]; p[4]=c[1]; p[5]=c[2];
+        }
+        pv++;
     }
     if (pv > 0) {
         glBindVertexArray(r->pt_vao); glBindBuffer(GL_ARRAY_BUFFER, r->pt_vbo);
@@ -450,6 +522,34 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam) {
         glUseProgram(r->pt_prog);
         glUniform1f(r->p_scale, 300.0f);
         glDrawArrays(GL_POINTS, 0, pv);
+    }
+
+    /* ---- route packet (animated dot riding the arc) + hop markers ---- */
+    if (rt->valid && rt->count >= 2) {
+        float tt = (float)fmod(snap->sim_time_s * 0.05, 1.0) * (float)(rt->count - 1);
+        uint32_t seg = (uint32_t)tt; if (seg >= rt->count-1) seg = rt->count-2;
+        float fr = tt - (float)seg;
+        fv3 a = r->node_pos[rt->node[seg]], b = r->node_pos[rt->node[seg+1]];
+        float *p = r->pt_buf;
+        p[0]=a.x+(b.x-a.x)*fr; p[1]=a.y+(b.y-a.y)*fr; p[2]=a.z+(b.z-a.z)*fr;
+        p[3]=1.0f; p[4]=0.92f; p[5]=0.65f;
+        glBindBuffer(GL_ARRAY_BUFFER, r->pt_vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)(6u*sizeof(float)), r->pt_buf);
+        glUseProgram(r->pt_prog);
+        glUniform1f(r->p_scale, 260.0f);
+        glDrawArrays(GL_POINTS, 0, 1);
+    }
+
+    /* ---- selected satellite: bright marker on top ---- */
+    if (selected_sat >= 0 && selected_sat < (int)snap->sat_count) {
+        fv3 a = r->node_pos[selected_sat];
+        float *p = r->pt_buf;
+        p[0]=a.x; p[1]=a.y; p[2]=a.z; p[3]=1.0f; p[4]=1.0f; p[5]=1.0f;
+        glBindBuffer(GL_ARRAY_BUFFER, r->pt_vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)(6u*sizeof(float)), r->pt_buf);
+        glUseProgram(r->pt_prog);
+        glUniform1f(r->p_scale, 240.0f);
+        glDrawArrays(GL_POINTS, 0, 1);
     }
 
     glDepthMask(GL_TRUE);

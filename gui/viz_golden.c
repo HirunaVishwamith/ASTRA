@@ -28,7 +28,7 @@ static void render_deterministic(GLCtx *c, Renderer *r, Image *out) {
     for (int i = 0; i < 120; ++i) astra_sim_tick(&SIM);
     const RenderSnapshot *snap = astra_snapshot_acquire(&SIM);
     Camera cam = { 0.7f, 0.35f, 22.0f, 0.8f };
-    render_frame(r, snap, cam);
+    render_frame(r, snap, cam, -1);
     glFinish();
     out->rgb = NULL;
     glctx_read_rgb(c, out);

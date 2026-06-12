@@ -141,7 +141,10 @@ static void publish(SimState *s) {
     snap->sat_count = s->num_sats;
     for (uint32_t i = 0; i < s->num_sats; ++i) {
         snap->sat[i].r = s->field.state[i].r;
+        snap->sat[i].v = s->field.state[i].v;
         snap->sat[i].alive = s->field.alive[i];
+        snap->sat[i].plane = s->field.plane[i];
+        snap->sat[i].slot  = s->field.slot[i];
     }
     snap->gs_count = s->ngs;
     for (uint32_t i = 0; i < s->ngs; ++i) {
@@ -149,9 +152,36 @@ static void publish(SimState *s) {
         snap->gs[i].best_sat = s->best_sat[i];
         snap->gs[i].lat_rad = s->gs[i].lat_rad;
         snap->gs[i].lon_rad = s->gs[i].lon_rad;
+        memcpy(snap->gs[i].name, s->gs[i].name, sizeof(snap->gs[i].name));
         /* world (ECI) position of the station at this epoch, for rendering */
         vec3 ecef = astra_gs_ecef(&s->gs[i], s->earth_r);
         snap->gs[i].r = astra_ecef_to_eci(ecef, s->sim_time_s, 0.0);
+    }
+
+    /* showcase route: walk the forwarding table between the last two ground
+     * stations (New York -> Tokyo in the default set) */
+    memset(&snap->route, 0, sizeof(snap->route));
+    if (s->ngs >= 2) {
+        node_id src = s->gs[s->ngs - 2].gid, dst = s->gs[s->ngs - 1].gid;
+        SnapRoute *rt = &snap->route;
+        rt->src_gid = src; rt->dst_gid = dst;
+        rt->min_bw_mbps = 1e30f;
+        node_id cur = src;
+        rt->node[rt->count++] = cur;
+        while (cur != dst && rt->count < ASTRA_SNAP_ROUTE_MAX) {
+            node_id nxt = astra_next_hop(&s->router, cur, dst);
+            if (nxt == ASTRA_INVALID || nxt >= s->node_count) break;
+            const Link *L = astra_get_link(&s->graph, cur, nxt);
+            float ms = L ? (float)(L->props.latency_s * 1000.0) : 0.0f;
+            if (L && L->props.bandwidth_mbps < rt->min_bw_mbps)
+                rt->min_bw_mbps = L->props.bandwidth_mbps;
+            rt->hop_ms[rt->count] = ms;
+            rt->total_ms += ms;
+            rt->node[rt->count++] = nxt;
+            cur = nxt;
+        }
+        rt->valid = (cur == dst && rt->count >= 2u);
+        if (!rt->valid) { rt->total_ms = 0.0f; rt->min_bw_mbps = 0.0f; }
     }
 
     snap->link_count = s->graph.link_count;
