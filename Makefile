@@ -33,7 +33,7 @@ VIZ_LIBS := -lEGL -lGL -lX11 -lpng -lm
 GUI_SRC  := $(wildcard gui/*.c)
 GUI_BIN  := $(patsubst gui/%.c,$(BUILD)/%,$(GUI_SRC))
 
-.PHONY: all test viz-test apps gui clean
+.PHONY: all test viz-test oracles apps gui clean
 .SECONDARY: $(CORE_OBJ) $(VIZ_OBJ)        # keep object files; don't auto-delete
 all: $(CORE_OBJ) $(APP_BIN)
 apps: $(APP_BIN)
@@ -62,15 +62,22 @@ $(BUILD)/%: gui/%.c $(CORE_OBJ) $(VIZ_OBJ) | $(BUILD)
 $(BUILD):
 	@mkdir -p $(BUILD)
 
-# Regenerate Python oracle vectors, then build & run every test binary.
+# Build & run every C test against the committed (frozen) oracle vectors in
+# tools/*_vectors.txt. These vectors are the verified Python<->C parity snapshot
+# captured before the Python reference was removed; they are the regression
+# reference now. No Python required.
 test: $(TEST_BIN)
+	@fail=0; for t in $(TEST_BIN); do \
+	  echo "=== $$t ==="; $$t || fail=1; done; \
+	  exit $$fail
+
+# Regenerate the oracle vectors from a Python reference (only meaningful when a
+# Python implementation is present; kept for provenance / future re-derivation).
+oracles:
 	@python3 tools/oracle_orbit.py
 	@python3 tools/oracle_topology.py
 	@python3 tools/oracle_routing.py
 	@python3 tools/oracle_ground.py
-	@fail=0; for t in $(TEST_BIN); do \
-	  echo "=== $$t ==="; $$t || fail=1; done; \
-	  exit $$fail
 
 clean:
 	rm -rf $(BUILD)
