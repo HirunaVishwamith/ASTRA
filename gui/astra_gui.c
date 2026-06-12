@@ -13,6 +13,8 @@
 #include "astra/sim_thread.h"
 #include "glctx.h"
 #include "render.h"
+#include "hud.h"
+#include "ui.h"
 #include "image.h"
 #include <GL/gl.h>
 #include <stdio.h>
@@ -48,6 +50,9 @@ int main(int argc, char **argv) {
     if (!c || !glctx_load_gl(c)) { fprintf(stderr, "GL window init failed\n"); return 1; }
     Renderer *r = render_create(W, H);
     if (!r) { fprintf(stderr, "renderer init failed\n"); return 1; }
+    UI  *ui  = ui_create();
+    Hud *hud = hud_create();
+    if (!ui || !hud) { fprintf(stderr, "HUD init failed\n"); return 1; }
 
     /* sim on its own thread, paced to wall-clock */
     if (!astra_sim_thread_start(&TH, &SIM, 1 /* realtime */)) {
@@ -57,6 +62,8 @@ int main(int argc, char **argv) {
     Camera cam = { 0.7f, 0.35f, 22.0f, 0.8f };
     const RenderSnapshot *snap = NULL;
     int frames = 0, running = 1;
+    int selected = 0;
+    int route_dv = 0;
 
     while (running) {
         const RenderSnapshot *s = astra_snapshot_acquire(&SIM);
@@ -78,8 +85,14 @@ int main(int argc, char **argv) {
         int w, h; glctx_size(c, &w, &h);
         render_resize(r, w, h);
 
-        if (snap) render_frame(r, snap, cam);
-        else { glClearColor(0.01f,0.01f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); }
+        if (snap) {
+            render_frame(r, snap, cam);
+            ui_begin(ui, w, h);
+            hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv, SIM.speed);
+            ui_end(ui);
+        } else {
+            glClearColor(0.01f,0.01f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        }
 
         if (!glctx_swap_and_poll(c) || in.quit) running = 0;
 
@@ -97,6 +110,7 @@ int main(int argc, char **argv) {
     }
 
     astra_sim_thread_stop(&TH);
+    hud_destroy(hud); ui_destroy(ui);
     render_destroy(r);
     glctx_destroy(c);
     printf("exited cleanly\n");
