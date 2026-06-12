@@ -9,8 +9,8 @@ CC      ?= gcc
 CSTD    ?= -std=c11
 WARN    := -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion
 OPT     ?= -O2 -march=native
-CFLAGS  := $(CSTD) $(WARN) $(OPT) -Iinclude
-LDLIBS  := -lm
+CFLAGS  := $(CSTD) $(WARN) $(OPT) -Iinclude -pthread
+LDLIBS  := -lm -pthread
 BUILD   := build
 
 # Core simulation sources (headless, no graphics dependency).
