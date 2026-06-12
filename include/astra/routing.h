@@ -17,6 +17,8 @@ typedef struct {
     RouteMode mode;
     CostMode  cost;
     uint32_t  node_count;
+    int       dv_rounds;      /* synchronous Bellman-Ford rounds per step */
+    int       dv_ready;       /* 0 until DV self-routes initialized       */
 
     /* all-pairs forwarding tables: indexed [src*node_count + dst].
      * Large; the Router must live in static/heap storage, never the stack. */

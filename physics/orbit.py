@@ -271,8 +271,15 @@ def has_line_of_sight(r1_km: np.ndarray, r2_km: np.ndarray, body_radius_km: floa
 def is_visible_from_station_ecef(station_ecef_km: np.ndarray, sat_ecef_km: np.ndarray, earth_radius_km: float, min_elev_deg: float) -> bool:
     from ground import elevation_angle_rad  # local import to avoid cycles
 
+    # For a spherical Earth, elevation >= mask already guarantees an
+    # unobstructed line of sight (the satellite is above the local horizon, so
+    # the straight ray to it cannot intersect the Earth body). A separate
+    # has_line_of_sight() Earth-occlusion test is redundant here and, worse,
+    # is buggy for surface stations: the closest point of the station->sat
+    # segment is the station itself, sitting at radius == earth_radius_km, so
+    # the strict `> earth_radius` check rejects every above-horizon satellite
+    # and the ground-link feature never produced a single link. Gate on
+    # elevation only.
     el = elevation_angle_rad(station_ecef_km, sat_ecef_km)
-    if el < math.radians(float(min_elev_deg)):
-        return False
-    return has_line_of_sight(station_ecef_km, sat_ecef_km, body_radius_km=float(earth_radius_km), clearance_km=0.0)
+    return el >= math.radians(float(min_elev_deg))
 

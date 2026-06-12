@@ -38,6 +38,7 @@ test: $(TEST_BIN)
 	@python3 tools/oracle_orbit.py
 	@python3 tools/oracle_topology.py
 	@python3 tools/oracle_routing.py
+	@python3 tools/oracle_ground.py
 	@fail=0; for t in $(TEST_BIN); do \
 	  echo "=== $$t ==="; $$t || fail=1; done; \
 	  exit $$fail
