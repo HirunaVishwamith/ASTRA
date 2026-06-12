@@ -15,6 +15,8 @@ void image_flip_y(Image *im);
 
 int  image_write_png(const Image *im, const char *path);
 int  image_read_png(Image *im, const char *path);   /* allocates im->rgb */
+int  image_read_jpeg(Image *im, const char *path);  /* allocates im->rgb */
+int  image_load(Image *im, const char *path);        /* dispatch by extension */
 
 /* Mean absolute per-channel difference (0..255). <0 if sizes differ. */
 double image_mad(const Image *a, const Image *b);

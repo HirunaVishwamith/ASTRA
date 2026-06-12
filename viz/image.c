@@ -2,8 +2,10 @@
 #include "image.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <png.h>
+#include <jpeglib.h>
 
 int image_alloc(Image *im, int w, int h) {
     im->w = w; im->h = h;
@@ -78,6 +80,40 @@ int image_read_png(Image *im, const char *path) {
     png_destroy_read_struct(&png, &info, NULL);
     fclose(fp);
     return 1;
+}
+
+int image_read_jpeg(Image *im, const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    struct jpeg_decompress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_decompress(&cinfo);
+    jpeg_stdio_src(&cinfo, fp);
+    jpeg_read_header(&cinfo, TRUE);
+    cinfo.out_color_space = JCS_RGB;           /* force 3-channel output */
+    jpeg_start_decompress(&cinfo);
+    int w = (int)cinfo.output_width, h = (int)cinfo.output_height;
+    if (!image_alloc(im, w, h)) { jpeg_destroy_decompress(&cinfo); fclose(fp); return 0; }
+    int row_stride = w * 3;
+    while ((int)cinfo.output_scanline < h) {
+        unsigned char *row = im->rgb + (size_t)cinfo.output_scanline * (size_t)row_stride;
+        jpeg_read_scanlines(&cinfo, &row, 1);
+    }
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    fclose(fp);
+    return 1;
+}
+
+int image_load(Image *im, const char *path) {
+    size_t n = strlen(path);
+    if (n >= 4) {
+        const char *ext = path + n - 4;
+        if (!strcasecmp(ext, ".jpg") || (n >= 5 && !strcasecmp(path+n-5, ".jpeg")))
+            return image_read_jpeg(im, path);
+    }
+    return image_read_png(im, path);
 }
 
 double image_mad(const Image *a, const Image *b) {

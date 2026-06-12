@@ -29,7 +29,7 @@ APP_BIN := $(patsubst apps/%.c,$(BUILD)/%,$(APP_SRC))
 # (gui/*.c). Uses GLX/X11 + EGL directly (no GLFW). PNG via libpng.
 VIZ_SRC  := $(wildcard viz/*.c)
 VIZ_OBJ  := $(patsubst viz/%.c,$(BUILD)/viz_%.o,$(VIZ_SRC))
-VIZ_LIBS := -lEGL -lGL -lX11 -lpng -lm
+VIZ_LIBS := -lEGL -lGL -lX11 -lpng -ljpeg -lm
 GUI_SRC  := $(wildcard gui/*.c)
 GUI_BIN  := $(patsubst gui/%.c,$(BUILD)/%,$(GUI_SRC))
 
