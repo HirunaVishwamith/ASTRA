@@ -25,18 +25,34 @@ TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 APP_SRC := $(wildcard apps/*.c)
 APP_BIN := $(patsubst apps/%.c,$(BUILD)/%,$(APP_SRC))
 
-.PHONY: all test apps clean
+# Visualization: renderer library (viz/*.c) + GUI/headless-render binaries
+# (gui/*.c). Uses GLX/X11 + EGL directly (no GLFW). PNG via libpng.
+VIZ_SRC  := $(wildcard viz/*.c)
+VIZ_OBJ  := $(patsubst viz/%.c,$(BUILD)/viz_%.o,$(VIZ_SRC))
+VIZ_LIBS := -lEGL -lGL -lX11 -lpng -lm
+GUI_SRC  := $(wildcard gui/*.c)
+GUI_BIN  := $(patsubst gui/%.c,$(BUILD)/%,$(GUI_SRC))
+
+.PHONY: all test apps gui clean
+.SECONDARY: $(CORE_OBJ) $(VIZ_OBJ)        # keep object files; don't auto-delete
 all: $(CORE_OBJ) $(APP_BIN)
 apps: $(APP_BIN)
+gui: $(GUI_BIN)
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/viz_%.o: viz/%.c | $(BUILD)
+	$(CC) $(CFLAGS) -Iviz -c $< -o $@
 
 $(BUILD)/%: tests/%.c $(CORE_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $< $(CORE_OBJ) -o $@ $(LDLIBS)
 
 $(BUILD)/%: apps/%.c $(CORE_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $< $(CORE_OBJ) -o $@ $(LDLIBS)
+
+$(BUILD)/%: gui/%.c $(CORE_OBJ) $(VIZ_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) -Iviz $< $(CORE_OBJ) $(VIZ_OBJ) -o $@ $(LDLIBS) $(VIZ_LIBS)
 
 $(BUILD):
 	@mkdir -p $(BUILD)
