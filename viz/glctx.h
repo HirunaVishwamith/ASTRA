@@ -12,6 +12,16 @@ typedef enum { GLCTX_EGL, GLCTX_GLX } GLCtxKind;
 
 typedef struct GLCtx GLCtx;   /* opaque; backend-specific */
 
+/* User input accumulated since the last poll (on-screen backend only). */
+typedef struct {
+    float dx, dy;      /* mouse drag delta while left button held (pixels) */
+    float scroll;      /* wheel ticks (+in / -out)                         */
+    int   quit;        /* window close / Esc / Q                           */
+    int   toggle_pause;/* P pressed                                        */
+    int   reboot;      /* R pressed                                        */
+    int   strike;      /* S / left-click: strike a satellite               */
+} VizInput;
+
 /* Offscreen EGL context (w x h). Returns NULL on failure. */
 GLCtx *glctx_egl_create(int w, int h);
 
@@ -30,6 +40,9 @@ int    glctx_swap_and_poll(GLCtx *c);
 
 /* Read the current framebuffer into im (allocated to ctx size, top-down). */
 int    glctx_read_rgb(GLCtx *c, Image *im);
+
+/* Drain accumulated input since last call (on-screen only; EGL zeroes it). */
+void   glctx_get_input(GLCtx *c, VizInput *in);
 
 void   glctx_destroy(GLCtx *c);
 

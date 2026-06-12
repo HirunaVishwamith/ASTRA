@@ -1,18 +1,45 @@
 /* ctx_egl.c — offscreen OpenGL 3.3 core context via EGL pbuffer.
  * Used for headless golden-image rendering (no display required). */
-#include "glctx.h"
+#include "glctx_internal.h"
 #include "glfn.h"
 #include <EGL/egl.h>
 #include <GL/gl.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-struct GLCtx {
-    GLCtxKind  kind;
-    int        w, h;
+typedef struct {
     EGLDisplay dpy;
     EGLContext ctx;
     EGLSurface surf;
+} EglImpl;
+
+static void egl_make_current(GLCtx *c) {
+    EglImpl *e = (EglImpl *)c->impl;
+    eglMakeCurrent(e->dpy, e->surf, e->surf, e->ctx);
+}
+static void *egl_getproc(const char *name) { return (void *)eglGetProcAddress(name); }
+static int  egl_load_gl(GLCtx *c) { (void)c; return glfn_load(egl_getproc); }
+static int  egl_swap(GLCtx *c) { (void)c; return 1; }
+static void egl_input(GLCtx *c, VizInput *in) { (void)c; *in = (VizInput){0}; }
+
+static int egl_read_rgb(GLCtx *c, Image *im) {
+    if (!im->rgb && !image_alloc(im, c->w, c->h)) return 0;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, c->w, c->h, GL_RGB, GL_UNSIGNED_BYTE, im->rgb);
+    image_flip_y(im);
+    return 1;
+}
+static void egl_destroy(GLCtx *c) {
+    EglImpl *e = (EglImpl *)c->impl;
+    eglMakeCurrent(e->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroySurface(e->dpy, e->surf);
+    eglDestroyContext(e->dpy, e->ctx);
+    eglTerminate(e->dpy);
+    free(e); free(c);
+}
+
+static const GLCtxVT EGL_VT = {
+    egl_make_current, egl_load_gl, egl_swap, egl_input, egl_read_rgb, egl_destroy
 };
 
 GLCtx *glctx_egl_create(int w, int h) {
@@ -46,39 +73,10 @@ GLCtx *glctx_egl_create(int w, int h) {
     EGLContext ctx = eglCreateContext(dpy, cfg, EGL_NO_CONTEXT, ctx_attr);
     if (ctx == EGL_NO_CONTEXT) { fprintf(stderr, "egl: context failed\n"); return NULL; }
 
+    EglImpl *e = (EglImpl *)calloc(1, sizeof(*e));
+    e->dpy = dpy; e->ctx = ctx; e->surf = surf;
     GLCtx *c = (GLCtx *)calloc(1, sizeof(*c));
-    c->kind = GLCTX_EGL; c->w = w; c->h = h;
-    c->dpy = dpy; c->ctx = ctx; c->surf = surf;
+    c->kind = GLCTX_EGL; c->w = w; c->h = h; c->vt = &EGL_VT; c->impl = e;
     eglMakeCurrent(dpy, surf, surf, ctx);
     return c;
-}
-
-void glctx_make_current(GLCtx *c) {
-    eglMakeCurrent(c->dpy, c->surf, c->surf, c->ctx);
-}
-
-static void *egl_getproc(const char *name) {
-    return (void *)eglGetProcAddress(name);
-}
-int glctx_load_gl(GLCtx *c) { (void)c; return glfn_load(egl_getproc); }
-
-void glctx_size(GLCtx *c, int *w, int *h) { if (w) *w = c->w; if (h) *h = c->h; }
-
-int glctx_swap_and_poll(GLCtx *c) { (void)c; return 1; }   /* offscreen: nothing */
-
-int glctx_read_rgb(GLCtx *c, Image *im) {
-    if (!im->rgb && !image_alloc(im, c->w, c->h)) return 0;
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, c->w, c->h, GL_RGB, GL_UNSIGNED_BYTE, im->rgb);
-    image_flip_y(im);            /* GL is bottom-up; PNG is top-down */
-    return 1;
-}
-
-void glctx_destroy(GLCtx *c) {
-    if (!c) return;
-    eglMakeCurrent(c->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    eglDestroySurface(c->dpy, c->surf);
-    eglDestroyContext(c->dpy, c->ctx);
-    eglTerminate(c->dpy);
-    free(c);
 }

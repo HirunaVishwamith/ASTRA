@@ -17,6 +17,7 @@ typedef struct Renderer Renderer;
 
 Renderer *render_create(int w, int h);
 void      render_destroy(Renderer *r);
+void      render_resize(Renderer *r, int w, int h);   /* viewport/aspect only */
 
 /* Draw one frame into the currently-bound framebuffer. */
 void      render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam);

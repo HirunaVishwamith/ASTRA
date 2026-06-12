@@ -164,6 +164,8 @@ void render_destroy(Renderer *r) {
     free(r);
 }
 
+void render_resize(Renderer *r, int w, int h) { r->w = w; r->h = h; }
+
 /* link colour ramp by utilisation (or dim red if down) */
 static void link_color(int up, float util, float *c) {
     if (!up) { c[0]=0.35f; c[1]=0.05f; c[2]=0.05f; return; }
