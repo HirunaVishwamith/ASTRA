@@ -1,80 +1,98 @@
 # ASTRA — Autonomous Satellite Traffic & Routing Architecture
 
-ASTRA is a research-oriented satellite constellation simulator focused on **dynamic topology**, **routing**, and **traffic performance** in LEO networks.
+ASTRA is a research-oriented LEO satellite-constellation simulator focused on
+**dynamic topology**, **routing**, and **traffic performance**, written in
+**pure C (C11)** with a hand-rolled **OpenGL** visualization.
 
 It combines:
-- **Real orbital propagation (2-body Kepler)** in ECI
+- **Real orbital propagation (2-body Kepler, universal variables)** in ECI
 - **Physics-valid ISLs** (range + Earth line-of-sight occlusion)
-- A clean **network graph** model with link **latency / bandwidth / loss**
-- Pluggable **routing algorithms** (Dijkstra + Distance-Vector)
-- **Traffic generation** + metrics (delivery ratio, delay, hops, drops)
-- Failure/impairment hooks (blackouts, latency spikes, loss scaling) + node strikes
+- A clean **network graph** with per-link **latency / bandwidth / loss**
+- Pluggable **routing** (Dijkstra + Distance-Vector), all-pairs each tick
+- **Traffic** generation + metrics (delivery ratio, delay, hops, drops)
+- **Failure/impairment** hooks (blackouts, latency spikes, loss scaling) + node strikes
+- A lock-free **sim↔render** boundary and a **GLX/EGL** 3D viewer
 
-<!-- <div align="center">
-  <img src="https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1200&auto=format&fit=crop" alt="Constellation Banner" width="100%" style="border-radius: 10px;">
-</div> -->
+![ASTRA C render](img/c_render_sample.png)
 
-![ASTRA Interface](img/interface3.png)
-
-<br>
-
+> ASTRA started as a Python + PyQt6 prototype. It was ported to C, verified
+> numerically against the Python (machine-precision parity on orbits, bit-exact
+> shortest-path routing), profiled, and the Python was retired. The verified
+> parity vectors remain in `tools/` as the regression reference.
 
 ## Key Capabilities
 
-* **Orbital physics**: ECI Cartesian state (\(r,v\)) propagated with a universal-variables Kepler solver (`orbit.py`).
-* **Earth rotation (ECI→ECEF)**: enables ground-relative satellite subpoint (lat/lon/alt) in the inspector.
-* **Clean network model**: topology is recomputed from physics and stored as a graph (`network_model.py`).
-* **Link properties**: each ISL has latency (distance/\(c\)), bandwidth (Mbps), and loss probability.
-* **Routing is modular** (`routing.py`):
-  - Dijkstra shortest path (centralized per-step)
-  - Distance-Vector (distributed-style, iterative per-step)
-* **Traffic simulation** (`traffic.py`): uniform / hotspot / burst patterns; delivery + delay + hop metrics.
-* **Failure scenarios** (`failures.py`): link blackouts, latency spikes, loss scaling; plus node failures via the UI strike.
+* **Orbital physics** (`orbit`): ECI state `(r,v)` via a universal-variables
+  Kepler solver; COE↔RV; ECI↔ECEF; spherical geodetic; ray–sphere LOS; elevation.
+* **Network model** (`graph`): topology recomputed from physics each step,
+  stored as an edge list + CSR with O(1) adjacency; inverse-square link budget.
+* **Routing** (`routing`): Dijkstra (lazy heap) and synchronous Distance-Vector,
+  producing an all-pairs next-hop table.
+* **Ground stations** (`ground`): elevation-masked ground↔satellite links.
+* **Traffic** (`traffic`): uniform / hotspot / burst patterns over a zero-alloc
+  packet pool with per-link bandwidth budgeting.
+* **Failures** (`failures`): link blackouts, latency spikes, loss scaling; plus
+  node strikes / system reboot via the command channel.
+* **Metrics** (`metrics`): delivery ratio, delay, hops, link utilisation, route
+  churn, convergence.
+* **Visualization** (`viz`/`gui`): lit graticule globe, ISL/ground links coloured
+  by utilisation, satellites + ground stations; headless PNG renders and an
+  interactive orbit-camera viewer.
 
-## Installation & Usage
+## Build & Run
 
-### Requirements
-- Python **3.10+**
-- `numpy`
-- `PyQt6`
-- `pyqtgraph`
+No build system beyond `make`. Requirements: a C11 compiler, `-pthread`, `libm`;
+for the viewer also `libEGL`, `libGL`, `libX11`, `libpng`, and a GL-capable
+environment (e.g. Mesa).
 
 ```bash
-python -m venv venv
-venv\Scripts\activate   # Windows PowerShell
-pip install numpy PyQt6 pyqtgraph
+make            # core library + headless apps
+make test       # 9 verification tests against the frozen parity vectors
+make gui        # build the OpenGL viewer + headless renderer
+make viz-test   # visual-correctness golden-image test
 ```
 
-### Run
-From the repository folder:
-
 ```bash
-python main.py
-```
+# headless performance profile + per-stage breakdown
+./build/astra_profile --steps 2000
+./build/astra_profile --sweep                  # 100..1024-sat scaling
 
-Or use the convenience launcher (more robust imports):
+# network-behavior dataset with a scripted strike + reboot
+./build/astra_dataset --strike 200:42 --reboot 400 --csv run.csv --json run.json
 
-```bash
-python run.py
+# render a frame to PNG (offscreen, no display needed)
+./build/astra_render --range 5000 --out frame.png
+
+# interactive viewer (needs a display): drag=orbit, wheel=zoom, P/R/S/Q
+./build/astra_gui --range 5000
 ```
 
 ### Simulating failure / recovery
-Use the UI:
-- **EXECUTE STRIKE**: disables a percentage of nodes (routing + traffic adapt automatically).
-- **SYSTEM REBOOT**: resets nodes and restarts router + traffic state.
+In the viewer: **S** (or left-click) strikes a satellite; **R** reboots all.
+Headless: `astra_dataset --strike STEP:SAT --reboot STEP`. Routing and traffic
+adapt automatically; the strike shows up as a sharp route-churn spike.
 
-## Project structure (current)
-- `main.py`: PyQt6 + pyqtgraph UI + simulation loop orchestration
-- `orbit.py`: orbital mechanics (COE/state conversion, propagation, ECI→ECEF, LOS)
-- `network_model.py`: topology graph and per-link properties
-- `routing.py`: routing interface + Dijkstra + Distance-Vector
-- `traffic.py`: packet generation, forwarding, and metrics
-- `failures.py`: impairments (blackout, latency spikes, loss multiplier)
-- `run.py`: launcher
+## Verification
+
+`make test` builds and runs the C tests against `tools/*_vectors.txt` — a frozen
+snapshot of reference vectors the original Python produced. At parity time the C
+matched it to: orbit position 3e-12 km, topology 5e-13 km, Dijkstra next-hop
+bit-exact over 30k pairs, Distance-Vector cost 4e-17, ground links exact.
+Failure/traffic/metrics modules are invariant-verified (conservation,
+reproducibility). The threaded sim↔render boundary is ThreadSanitizer-clean.
+
+## Project structure
+- `include/astra/`, `src/` — simulation core (one module per file)
+- `tests/`, `tools/*_vectors.txt` — verification tests + frozen reference vectors
+- `apps/` — headless tools (`astra_profile`, `astra_dataset`, `astra_physcheck`)
+- `viz/`, `gui/` — OpenGL renderer + executables
+- `Makefile`, `CLAUDE.md` — build + contributor guide
 
 ## Notes
-- This is a **research simulator**: the models are intentionally simple and modular so you can swap pieces (e.g., add ground stations, queueing, link budgets, GMST).
+- A **research simulator**: models are intentionally modular so pieces can be
+  swapped (RF link budget, J2/drag, GMST, queueing, additional shells).
+- The orbital model is currently pure two-body (no J2/drag); an SGP4-vs-real-TLE
+  accuracy study is planned to quantify the divergence.
 
 ## License
-
 Copyright © 2024. Licensed under the MIT License. See `LICENSE` for details.
