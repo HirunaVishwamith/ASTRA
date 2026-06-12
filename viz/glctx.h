@@ -21,6 +21,9 @@ GLCtx *glctx_glx_create(int w, int h, const char *title);
 void   glctx_make_current(GLCtx *c);
 void   glctx_size(GLCtx *c, int *w, int *h);
 
+/* Load modern GL entry points using this backend's getproc. 1 on success. */
+int    glctx_load_gl(GLCtx *c);
+
 /* On-screen only: present the back buffer / pump events. Returns 0 if the
  * window asked to close. Offscreen: no-op, returns 1. */
 int    glctx_swap_and_poll(GLCtx *c);

@@ -1,6 +1,7 @@
 /* ctx_egl.c — offscreen OpenGL 3.3 core context via EGL pbuffer.
  * Used for headless golden-image rendering (no display required). */
 #include "glctx.h"
+#include "glfn.h"
 #include <EGL/egl.h>
 #include <GL/gl.h>
 #include <stdlib.h>
@@ -55,6 +56,11 @@ GLCtx *glctx_egl_create(int w, int h) {
 void glctx_make_current(GLCtx *c) {
     eglMakeCurrent(c->dpy, c->surf, c->surf, c->ctx);
 }
+
+static void *egl_getproc(const char *name) {
+    return (void *)eglGetProcAddress(name);
+}
+int glctx_load_gl(GLCtx *c) { (void)c; return glfn_load(egl_getproc); }
 
 void glctx_size(GLCtx *c, int *w, int *h) { if (w) *w = c->w; if (h) *h = c->h; }
 
