@@ -4,17 +4,36 @@
 #include "astra/sim.h"
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #define TB_MASK  3u
 #define TB_DIRTY 4u
 
+const char *const astra_prof_stage_name[PF_NSTAGES] = {
+    "propagate", "active", "topology", "ground",
+    "failures", "csr", "routing", "traffic", "metrics"
+};
+
+/* Monotonic nanosecond clock for stage timing. */
+static inline uint64_t astra_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 /* ---- construction -------------------------------------------------------- */
-void astra_sim_init(SimState *s, uint64_t seed) {
+void astra_sim_init_cfg(SimState *s, uint64_t seed, uint32_t planes,
+                        uint32_t per_plane, double max_range_km) {
     memset(s, 0, sizeof(*s));
-    s->num_sats = ASTRA_NUM_TOTAL_SATS;
+    if (planes < 1u) planes = 1u;
+    if (per_plane < 1u) per_plane = 1u;
+    if ((uint64_t)planes * per_plane > ASTRA_MAX_SATS)
+        per_plane = ASTRA_MAX_SATS / planes;     /* clamp to capacity */
+
+    s->num_sats = planes * per_plane;
     s->earth_r = ASTRA_EARTH_RADIUS_KM;
     s->mu = ASTRA_MU_EARTH;
-    s->max_range = ASTRA_MAX_LINK_RANGE_KM;
+    s->max_range = (max_range_km > 0.0) ? max_range_km : ASTRA_MAX_LINK_RANGE_KM;
     s->gs_max_range = ASTRA_GROUND_SAT_MAX_RANGE_KM;
     s->sim_dt_s = 5.0;
     s->speed = 1.0;
@@ -23,15 +42,15 @@ void astra_sim_init(SimState *s, uint64_t seed) {
     s->cost = ASTRA_COST_LATENCY;
     s->impair = astra_impair_none();
 
-    /* constellation */
+    /* constellation (Walker-Delta: RAAN per plane, phase per slot + plane skew) */
     SatField *f = &s->field;
     f->count = s->num_sats;
-    for (uint32_t pl = 0; pl < ASTRA_NUM_PLANES; ++pl)
-        for (uint32_t sl = 0; sl < ASTRA_NUM_SATS_PER_PLANE; ++sl) {
-            node_id id = pl * ASTRA_NUM_SATS_PER_PLANE + sl;
+    for (uint32_t pl = 0; pl < planes; ++pl)
+        for (uint32_t sl = 0; sl < per_plane; ++sl) {
+            node_id id = pl * per_plane + sl;
             OrbitElements c = { ASTRA_SAT_SMA_KM, ASTRA_SAT_ECC,
-                ASTRA_INCLINATION_DEG * M_PI/180.0, (2.0*M_PI/ASTRA_NUM_PLANES)*pl, 0.0,
-                (2.0*M_PI/ASTRA_NUM_SATS_PER_PLANE)*sl + pl*0.1 };
+                ASTRA_INCLINATION_DEG * M_PI/180.0, (2.0*M_PI/planes)*pl, 0.0,
+                (2.0*M_PI/per_plane)*sl + pl*0.1 };
             f->coe0[id] = c;
             f->state[id] = astra_coe_to_rv(s->mu, c);
             f->alive[id] = 1;
@@ -54,6 +73,10 @@ void astra_sim_init(SimState *s, uint64_t seed) {
     atomic_store(&s->frame_seq, 0u);
     atomic_store(&s->cmd_head, 0u);
     atomic_store(&s->cmd_tail, 0u);
+}
+
+void astra_sim_init(SimState *s, uint64_t seed) {
+    astra_sim_init_cfg(s, seed, ASTRA_NUM_PLANES, ASTRA_NUM_SATS_PER_PLANE, 0.0);
 }
 
 /* ---- command ring -------------------------------------------------------- */
@@ -161,15 +184,24 @@ const RenderSnapshot *astra_snapshot_acquire(SimState *s) {
 }
 
 /* ---- the fixed-step tick ------------------------------------------------- */
+/* STAGE(id) closes the previous stage's interval and opens the next; when
+ * profiling is off it compiles down to nothing measurable (one branch). */
+#define STAGE(id) do { if (prof) { uint64_t _t = astra_now_ns(); \
+    s->prof.ns[_stage] += _t - _mark; _mark = _t; _stage = (id); } } while (0)
+
 static void advance(SimState *s) {
     SatField *f = &s->field;
     double dt = s->sim_dt_s;
+    const int prof = s->prof.enabled;
+    uint64_t _mark = prof ? astra_now_ns() : 0;
+    ProfStage _stage = PF_PROPAGATE;
 
     /* 1) physics: propagate alive sats */
     for (uint32_t i = 0; i < s->num_sats; ++i) {
         if (!f->alive[i]) continue;
         f->state[i] = astra_propagate_kepler(s->mu, f->state[i].r, f->state[i].v, dt);
     }
+    STAGE(PF_ACTIVE);
 
     /* 2) active sets + position lookup */
     s->sat_alive_count = 0;
@@ -185,26 +217,43 @@ static void advance(SimState *s) {
 
     s->sim_time_s += dt;          /* sim_time used for ECEF this tick */
     s->step_count++;
+    STAGE(PF_TOPOLOGY);
 
-    /* 3) ISL topology, 4) ground links */
+    /* 3) ISL topology */
     astra_build_isl_topology(&s->graph, s->scratch_pos, s->sat_alive_ids,
                              s->sat_alive_count, s->earth_r, s->max_range);
+    STAGE(PF_GROUND);
+
+    /* 4) ground links */
     astra_add_ground_links(&s->graph, s->gs, s->ngs, s->scratch_pos,
                            s->sat_alive_ids, s->sat_alive_count,
                            s->sim_time_s, s->earth_r, s->gs_max_range, s->best_sat);
+    STAGE(PF_FAILURES);
 
-    /* 5) impairments, 6) CSR (skips down links), 7) routing */
+    /* 5) impairments */
     astra_failures_apply(&s->graph, &s->impair, dt, &s->fail_rng);
-    astra_build_csr(&s->graph, s->node_count, s->cost);
-    astra_router_step(&s->router, &s->graph.csr);
+    STAGE(PF_CSR);
 
-    /* 8) traffic, 9) metrics */
+    /* 6) CSR (skips down links) */
+    astra_build_csr(&s->graph, s->node_count, s->cost);
+    STAGE(PF_ROUTING);
+
+    /* 7) routing */
+    astra_router_step(&s->router, &s->graph.csr);
+    STAGE(PF_TRAFFIC);
+
+    /* 8) traffic */
     astra_traffic_step(&s->traffic, &s->graph, &s->router,
                        s->active_ids, s->active_count, s->sim_time_s, dt);
+    STAGE(PF_METRICS);
+
+    /* 9) metrics */
     s->last_metrics = astra_metrics_step(&s->metrics, &s->router,
                                          s->active_ids, s->active_count,
                                          &s->traffic.stats, s->sim_time_s);
+    if (prof) { s->prof.ns[_stage] += astra_now_ns() - _mark; s->prof.samples++; }
 }
+#undef STAGE
 
 void astra_sim_tick(SimState *s) {
     drain_commands(s);

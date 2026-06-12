@@ -50,6 +50,18 @@ typedef enum { CMD_STRIKE, CMD_REBOOT_ALL, CMD_ROUTE_MODE, CMD_COST_MODE,
 typedef struct { CmdType type; uint32_t u; double f; } Command;
 #define ASTRA_CMD_RING 256u
 
+/* ---- Optional per-stage profiling (off by default, ~0 cost when off) ----- */
+typedef enum {
+    PF_PROPAGATE, PF_ACTIVE, PF_TOPOLOGY, PF_GROUND, PF_FAILURES,
+    PF_CSR, PF_ROUTING, PF_TRAFFIC, PF_METRICS, PF_NSTAGES
+} ProfStage;
+typedef struct {
+    int      enabled;
+    uint64_t ns[PF_NSTAGES];   /* accumulated nanoseconds per stage */
+    uint64_t samples;          /* number of advance() calls measured */
+} SimProfile;
+extern const char *const astra_prof_stage_name[PF_NSTAGES];
+
 typedef struct {
     /* ---- simulation truth (sim thread owns exclusively) ---- */
     uint32_t      num_sats, ngs, node_count;
@@ -86,10 +98,17 @@ typedef struct {
     /* ---- command channel: SPSC ring ---- */
     Command          cmd[ASTRA_CMD_RING];
     _Atomic uint32_t cmd_head, cmd_tail;
+
+    /* ---- optional profiling (sim thread fills; set prof.enabled=1) ---- */
+    SimProfile       prof;
 } SimState;
 
 /* ---- lifecycle ---------------------------------------------------------- */
-void astra_sim_init(SimState *s, uint64_t seed);
+void astra_sim_init(SimState *s, uint64_t seed);    /* default 10x10 shell */
+/* Custom Walker-Delta shell (planes*per_plane must be <= ASTRA_MAX_SATS).
+ * max_range_km <= 0 selects the config default. */
+void astra_sim_init_cfg(SimState *s, uint64_t seed, uint32_t planes,
+                        uint32_t per_plane, double max_range_km);
 void astra_sim_tick(SimState *s);          /* drain commands, one step, publish */
 
 /* ---- render-side API (call from the render thread) ---------------------- */

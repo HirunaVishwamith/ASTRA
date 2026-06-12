@@ -21,13 +21,21 @@ CORE_OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(CORE_SRC))
 TEST_SRC := $(wildcard tests/*.c)
 TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 
-.PHONY: all test clean
-all: $(CORE_OBJ)
+# Headless apps (each apps/*.c is its own binary).
+APP_SRC := $(wildcard apps/*.c)
+APP_BIN := $(patsubst apps/%.c,$(BUILD)/%,$(APP_SRC))
+
+.PHONY: all test apps clean
+all: $(CORE_OBJ) $(APP_BIN)
+apps: $(APP_BIN)
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/%: tests/%.c $(CORE_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $< $(CORE_OBJ) -o $@ $(LDLIBS)
+
+$(BUILD)/%: apps/%.c $(CORE_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $< $(CORE_OBJ) -o $@ $(LDLIBS)
 
 $(BUILD):
