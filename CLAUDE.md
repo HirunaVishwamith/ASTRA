@@ -96,18 +96,34 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   (offscreen, headless golden images) and **GLX/X11** (interactive window).
 - `viz/glfn*` — GLEW-free runtime loader (X-macro list) for GL 2.0+ entry points
   via `eglGetProcAddress` / `glXGetProcAddressARB`. GL 1.1 calls use `-lGL`.
-- `viz/shader`, `viz/mat4`, `viz/image` (libpng) — helpers.
-- `viz/render.c` — the scene: lit graticule globe, ISL/ground links coloured by
-  utilisation (idle=cool, loaded=hot, down=dim red, depth-occluded by the
-  globe), satellites + ground stations as round `GL_POINTS`. Consumes a
-  `RenderSnapshot` only.
+- `viz/shader`, `viz/mat4`, `viz/image` (libpng + libjpeg) — helpers.
+- `viz/render.c` — the 3D scene: **photoreal Earth** (day-map texture from
+  `img/earth_texture.jpg`, per-vertex equirectangular UVs, day/night terminator
+  with faked city lights, ocean specular, additive atmosphere limb, starfield),
+  ISL/ground links coloured by utilisation (idle=cool, loaded=hot, down=dim red,
+  depth-occluded by the globe), satellites + ground stations as glowing points.
+  Consumes a `RenderSnapshot` only. `render_view_proj()` exposes the frame MVP
+  for screen projection (picking / callouts).
+- `viz/ui.{c,h}` — batched immediate-mode 2D overlay: rects, outlines, thick
+  lines, arcs, triangles in one shape draw; **FreeType** text via per-font R8
+  glyph atlases (`ui_font_load(ttf, px)`). Pixel coords, RGBA, depth off.
+- `viz/hud.{c,h}` — the **mission-control dashboard** drawn over the 3D scene
+  from a `RenderSnapshot`: top status bar, GLOBAL ASSET LIST, SELECTED ASSET,
+  LIVE NETWORK PERFORMANCE (avg-delay gauge + bar meters), SIMULATION CONTROL,
+  bottom history plots, and a 3D selection callout. Pure presentation.
 - `gui/astra_render` — headless: run N steps, render snapshot → PNG.
-- `gui/astra_gui` — interactive viewer (sim on its own realtime thread; drag =
-  orbit, wheel = zoom, P/R/S/Q keys; `--selftest N` validates without a user).
+- `gui/astra_gui` — interactive viewer (sim on its own realtime thread + HUD).
+  Controls: drag = orbit, wheel = zoom, **left-click = select satellite**,
+  Up/Down (or `[` `]`) = walk the asset list, **S** = strike selected, **R** =
+  reboot, **P** = pause, **M** = toggle routing, **Q/Esc** = quit.
+  `--selftest N --shot out.png` renders N frames headlessly for validation.
 - `gui/viz_golden` — visual-correctness test (render determinism + golden).
+- `gui/viz_uitest` — UI-framework smoke test (panels/gauge/plot/text → PNG).
 
 > Gotcha: point size is `gl_PointSize = uScale/p.w` where `p.w` ≈ camera distance
-> (~18), so `uScale` must be ~hundreds (sats 360, GS 620), not single digits.
+> (~18), so `uScale` must be ~hundreds, not single digits.
+> Fonts live at `/usr/share/fonts/truetype/dejavu/`. Run the viewer from the repo
+> root so `img/earth_texture.jpg` and the font paths resolve.
 
 ---
 

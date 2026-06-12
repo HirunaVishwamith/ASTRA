@@ -67,10 +67,16 @@ make viz-test   # visual-correctness golden-image test
 ./build/astra_gui --range 5000
 ```
 
-### Simulating failure / recovery
-In the viewer: **S** (or left-click) strikes a satellite; **R** reboots all.
-Headless: `astra_dataset --strike STEP:SAT --reboot STEP`. Routing and traffic
-adapt automatically; the strike shows up as a sharp route-churn spike.
+### Viewer controls
+Drag = orbit camera, wheel = zoom, **left-click = select a satellite**,
+Up/Down (or `[` `]`) = walk the asset list, **S** = strike the selected sat,
+**R** = reboot all, **P** = pause, **M** = toggle routing, **Q/Esc** = quit.
+The dashboard (asset list, selected-asset readout, latency gauge, performance
+meters, and live plots) updates from the running simulation in real time.
+
+Headless failure scripting: `astra_dataset --strike STEP:SAT --reboot STEP`.
+Routing and traffic adapt automatically; a strike shows up as a sharp
+route-churn spike.
 
 ## Verification
 
