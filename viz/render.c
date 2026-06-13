@@ -388,6 +388,7 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam, int selec
     fv3 sun = fv3_norm(fv3_make(0.917f, 0.398f, 0.0f));
 
     glViewport(0, 0, r->w, r->h);
+    glEnable(GL_MULTISAMPLE);   /* anti-alias 3D edges (no-op on single-sample FBs) */
     glClearColor(0.005f, 0.006f, 0.013f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_PROGRAM_POINT_SIZE);

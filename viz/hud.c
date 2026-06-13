@@ -36,6 +36,7 @@ struct Hud {
     int  scroll;       /* first visible asset-list entry */
     int  show_elems;   /* SELECTED ASSET shows orbital elements */
     int  focus_mode;   /* hide side panels to maximise the viewport */
+    int  show_help;    /* controls overlay */
     /* scratch, recomputed each frame */
     uint8_t deg[ASTRA_MAX_SATS];
     uint8_t gs_link[ASTRA_MAX_SATS];
@@ -269,6 +270,7 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
     act.select_sat = -1; act.set_route_mode = -1; act.set_cost_mode = -1;
 
     if (in && in->toggle_focus) h->focus_mode = !h->focus_mode;
+    if (in && in->toggle_help)  h->show_help  = !h->show_help;
 
     /* ---- derived stats ---- */
     uint32_t alive = 0;
@@ -279,10 +281,15 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
     memset(h->gs_bw, 0, snap->gs_count*sizeof(float));
     memset(h->gs_deg, 0, snap->gs_count);
     uint32_t up_links = 0;
+    double net_cap_gbps = 0.0;   /* live network capacity, RF-budget priced */
     for (uint32_t e = 0; e < snap->link_count; ++e) {
         const SnapLink *L = &snap->link[e];
-        if (L->up) up_links++;
         int ugs = L->u >= snap->sat_count, vgs = L->v >= snap->sat_count;
+        if (L->up) {
+            up_links++;
+            if (ugs || vgs) net_cap_gbps += astra_rf_budget(&ASTRA_RF_KA_GW_UP, L->dist_km).rate_gbps;
+            else            net_cap_gbps += astra_optical_budget(&ASTRA_OPTICAL_ISL, L->dist_km).rate_gbps;
+        }
         if (!ugs && L->u < ASTRA_MAX_SATS) { h->deg[L->u]++; h->bw[L->u]+=L->bw_mbps; if (vgs) h->gs_link[L->u]=1; }
         if (!vgs && L->v < ASTRA_MAX_SATS) { h->deg[L->v]++; h->bw[L->v]+=L->bw_mbps; if (ugs) h->gs_link[L->v]=1; }
         /* aggregate ground-station capacity (gs index = node id - sat_count) */
@@ -429,6 +436,9 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
                    C_CYAN, h->focus_mode)) {
             h->focus_mode = !h->focus_mode; act.consumed = 1;
         }
+        if (button(h, u, in, fbx - 74.0f, fby, 66.0f, 20, "HELP [H]", C_GREY, h->show_help)) {
+            h->show_help = !h->show_help; act.consumed = 1;
+        }
     }
 
     /* ======================= top status bar ================================= */
@@ -453,6 +463,11 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
         ui_text(u, h->f_tiny, bx, 7, C_DIM, "ACTIVE NETWORK");
         snprintf(buf, sizeof buf, "%u / %u", up_links, snap->link_count);
         ui_text(u, h->f_med, bx, 20, C_CYAN, buf);
+        bx += 100; ui_rect(u, bx-16, 8, 1, TOP-16, C_EDGE);
+        ui_text(u, h->f_tiny, bx, 7, C_DIM, "NETWORK CAPACITY");
+        if (net_cap_gbps >= 1000.0) snprintf(buf, sizeof buf, "%.1f Tbps", net_cap_gbps/1000.0);
+        else                        snprintf(buf, sizeof buf, "%.0f Gbps", net_cap_gbps);
+        ui_text(u, h->f_med, bx, 20, C_GREEN, buf);
     }
     {   /* right: title + wall clock */
         int t = (int)snap->sim_time_s;
@@ -811,6 +826,34 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
         }
     }
     }   /* end side panels */
+
+    /* ---- controls overlay (H or the HELP button) ---- */
+    if (h->show_help) {
+        ui_rect(u, 0, 0, (float)W, (float)Hh, ui_rgba(0,0,0,0.58f));   /* dim backdrop */
+        float pw = 470.0f, ph = 322.0f;
+        float px = ((float)W-pw)*0.5f, py = ((float)Hh-ph)*0.5f;
+        float yy = panel(h, u, px, py, pw, ph, "CONTROLS & KEYBOARD", "ASTRA", C_CYAN) + 4.0f;
+        static const struct { const char *k, *d; } rows[] = {
+            {"Drag",          "Orbit the camera"},
+            {"Wheel",         "Zoom in / out"},
+            {"Left-click",    "Select satellite / operate dashboard"},
+            {"Up / Down  [ ]","Walk the asset list"},
+            {"S",             "Strike the selected satellite"},
+            {"R",             "Reboot all (revive struck sats)"},
+            {"P",             "Pause / resume the simulation"},
+            {"M",             "Cycle routing mode"},
+            {"F",             "Focus mode (collapse side panels)"},
+            {"H",             "Toggle this help"},
+            {"Q / Esc",       "Quit"},
+        };
+        for (size_t i = 0; i < sizeof rows/sizeof rows[0]; ++i) {
+            ui_text(u, h->f_med,   px+18,  yy,    C_GOLD,  rows[i].k);
+            ui_text(u, h->f_small, px+185, yy+1,  C_WHITE, rows[i].d);
+            yy += 22.0f;
+        }
+        ui_text(u, h->f_tiny, px+18, py+ph-20, C_DIM, "Press H or click HELP to close.");
+        if (in && in->click) act.consumed = 1;   /* swallow clicks while open */
+    }
 
     /* consume any other click that landed on panel chrome (only the top bar
      * is chrome in focus mode; the side columns are gone) */

@@ -121,7 +121,8 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   depth off. ASCII 32–127 only — no `—`/`→`/`·` in HUD strings.
 - `viz/hud.{c,h}` — the **mission-control console** drawn over the 3D scene
   from a `RenderSnapshot` (layout mirrors `realistic_interface.png`): top
-  status bar (TOTAL OBJECTS / COVERAGE / ACTIVE NETWORK + clock), GLOBAL ASSET
+  status bar (TOTAL OBJECTS / COVERAGE / ACTIVE NETWORK / NETWORK CAPACITY in
+  Tbps, RF-priced live + clock), a controls overlay (H), GLOBAL ASSET
   LIST (filter chips + clickable rows), SELECTED ASSET (live altitude /
   velocity / inclination / geodetic lat-lon, network role, aggregate BW, link
   signal, **VIEW ORBITAL ELEMENTS** toggle computing osculating COEs from r,v),
@@ -143,8 +144,11 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   Controls: drag = orbit, wheel = zoom, **left-click = select satellite or
   operate any dashboard control**, Up/Down (or `[` `]`) = walk the asset list,
   **S** = strike selected, **R** = reboot, **P** = pause, **M** = toggle
-  routing, **F** = focus mode (collapse side panels), **Q/Esc** = quit.
-  Default window 1600×900.
+  routing, **F** = focus mode (collapse side panels), **H** = controls overlay,
+  **Q/Esc** = quit. Default window 1920×900. The GLX backend requests an
+  **8x→4x→none MSAA** framebuffer (`glEnable(GL_MULTISAMPLE)`) so the globe limb,
+  ISL lines, and markers are anti-aliased; the EGL golden path stays
+  single-sample so `viz-test` is unaffected.
   `--selftest N --shot out.png` renders N frames headlessly for validation.
 - `gui/viz_golden` — visual-correctness test (render determinism + golden).
 - `gui/viz_uitest` — UI-framework smoke test (panels/gauge/plot/text → PNG).

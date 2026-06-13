@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
 
         if (snap) {
             /* HUD first: it batches the 2D pass and consumes dashboard clicks */
-            HudInput  hin = { in.click, in.click_x, in.click_y, in.toggle_focus };
+            HudInput  hin = { in.click, in.click_x, in.click_y, in.toggle_focus, in.toggle_help };
             HudActions act;
             ui_begin(ui, w, h);
             hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv,

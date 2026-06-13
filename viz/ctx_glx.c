@@ -18,6 +18,12 @@ typedef GLXContext (*PFN_glXCreateContextAttribsARB)(
 #define GLX_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define GLX_CONTEXT_PROFILE_MASK_ARB  0x9126
 #define GLX_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
+#ifndef GLX_SAMPLE_BUFFERS
+#define GLX_SAMPLE_BUFFERS 0x186a0
+#endif
+#ifndef GLX_SAMPLES
+#define GLX_SAMPLES 0x186a1
+#endif
 
 typedef struct {
     Display   *dpy;
@@ -46,6 +52,7 @@ static void handle_key(GlxImpl *g, KeySym ks) {
         case XK_s: case XK_S: g->acc.strike = 1; break;
         case XK_m: case XK_M: g->acc.route_mode = 1; break;
         case XK_f: case XK_F: g->acc.toggle_focus = 1; break;
+        case XK_h: case XK_H: g->acc.toggle_help = 1; break;
         case XK_Down: case XK_bracketright: g->acc.sel_next = 1; break;
         case XK_Up:   case XK_bracketleft:  g->acc.sel_prev = 1; break;
         default: break;
@@ -131,20 +138,29 @@ GLCtx *glctx_glx_create(int w, int h, const char *title) {
     if (!dpy) { fprintf(stderr, "glx: cannot open display\n"); return NULL; }
     int screen = DefaultScreen(dpy);
 
-    int fb_attr[] = {
-        GLX_X_RENDERABLE, True,
-        GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
-        GLX_RENDER_TYPE, GLX_RGBA_BIT,
-        GLX_DOUBLEBUFFER, True,
-        GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
-        GLX_DEPTH_SIZE, 24,
-        None
-    };
-    int ncfg = 0;
-    GLXFBConfig *cfgs = glXChooseFBConfig(dpy, screen, fb_attr, &ncfg);
-    if (!cfgs || ncfg < 1) { fprintf(stderr, "glx: no fbconfig\n"); XCloseDisplay(dpy); return NULL; }
-    GLXFBConfig fbc = cfgs[0];
-    XFree(cfgs);
+    /* Request a multisampled framebuffer for anti-aliasing; fall back from
+     * 8x -> 4x -> none so we always get a config even on limited drivers. */
+    int try_samples[] = { 8, 4, 0 };
+    GLXFBConfig fbc = 0; int chosen_samples = 0;
+    for (size_t k = 0; k < sizeof try_samples/sizeof try_samples[0] && !fbc; ++k) {
+        int fb_attr[] = {
+            GLX_X_RENDERABLE, True,
+            GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+            GLX_RENDER_TYPE, GLX_RGBA_BIT,
+            GLX_DOUBLEBUFFER, True,
+            GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
+            GLX_DEPTH_SIZE, 24,
+            GLX_SAMPLE_BUFFERS, try_samples[k] ? 1 : 0,
+            GLX_SAMPLES, try_samples[k],
+            None
+        };
+        int ncfg = 0;
+        GLXFBConfig *cfgs = glXChooseFBConfig(dpy, screen, fb_attr, &ncfg);
+        if (cfgs && ncfg >= 1) { fbc = cfgs[0]; chosen_samples = try_samples[k]; }
+        if (cfgs) XFree(cfgs);
+    }
+    if (!fbc) { fprintf(stderr, "glx: no fbconfig\n"); XCloseDisplay(dpy); return NULL; }
+    fprintf(stderr, "glx: %dx MSAA\n", chosen_samples);
 
     XVisualInfo *vi = glXGetVisualFromFBConfig(dpy, fbc);
     if (!vi) { fprintf(stderr, "glx: no visual\n"); XCloseDisplay(dpy); return NULL; }
