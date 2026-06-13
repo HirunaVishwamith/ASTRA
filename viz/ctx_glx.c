@@ -45,6 +45,7 @@ static void handle_key(GlxImpl *g, KeySym ks) {
         case XK_r: case XK_R: g->acc.reboot = 1; break;
         case XK_s: case XK_S: g->acc.strike = 1; break;
         case XK_m: case XK_M: g->acc.route_mode = 1; break;
+        case XK_f: case XK_F: g->acc.toggle_focus = 1; break;
         case XK_Down: case XK_bracketright: g->acc.sel_next = 1; break;
         case XK_Up:   case XK_bracketleft:  g->acc.sel_prev = 1; break;
         default: break;

@@ -103,7 +103,9 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   atmosphere limb, starfield), ISL/ground links coloured by utilisation
   (idle=cool, loaded=hot, down=dim red, depth-occluded by the globe),
   satellites coloured **by orbital plane** (dead = dim red, selected = bright
-  marker), the snapshot's **active route as a glowing gold arc** with an
+  marker), **ground stations as pulsing amber beacons** (additive halo that
+  breathes on `sim_time` + a steady core, so they read distinctly from sats),
+  the snapshot's **active route as a glowing gold arc** with an
   animated packet dot. Consumes a `RenderSnapshot` only. `render_view_proj()`
   exposes the frame MVP for screen projection (picking / callouts).
   **Frame accuracy:** ECI z (pole) maps to render up via (x,y,z)→(x,z,−y) and
@@ -123,16 +125,23 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   NETWORK PERFORMANCE (Space Resilience Index + 6 sparkline metric cells),
   SIMULATION CONTROL & CONFIG (routing chips MIN LATENCY / MIN HOPS / DISTANCE
   VECTOR, speed −/+, PAUSE, STRIKE, REBOOT), ACTIVE ROUTE (hop-by-hop list +
-  stream-latency sparkline), plus station labels, a route callout, selection
-  ring, and a plane-colour legend in the viewport. Interaction is
-  immediate-mode: pass the click in `HudInput`, apply the returned
-  `HudActions` (`consumed=1` ⇒ the click was on chrome, skip 3D picking).
+  stream-latency sparkline), plus **ground-station beacons** (pulsing hexagon
+  glyph + a data card showing aggregate UL/DL capacity and live sat-link
+  count, summed from the snapshot's ground links), a route callout, selection
+  ring, and a plane-colour legend in the viewport. A **FOCUS VIEW** toggle
+  (button top-right of the viewport, or **F**) collapses both side columns to
+  maximise the 3D Earth — `focus_mode` lives in `struct Hud`; the viewport
+  span (`VL`/`VR`) and overlays expand to full width when it is on.
+  Interaction is immediate-mode: pass the click (and `toggle_focus`) in
+  `HudInput`, apply the returned `HudActions` (`consumed=1` ⇒ the click was on
+  chrome, skip 3D picking).
 - `gui/astra_render` — headless: run N steps, render snapshot → PNG.
 - `gui/astra_gui` — interactive viewer (sim on its own realtime thread + HUD).
   Controls: drag = orbit, wheel = zoom, **left-click = select satellite or
   operate any dashboard control**, Up/Down (or `[` `]`) = walk the asset list,
   **S** = strike selected, **R** = reboot, **P** = pause, **M** = toggle
-  routing, **Q/Esc** = quit. Default window 1600×900.
+  routing, **F** = focus mode (collapse side panels), **Q/Esc** = quit.
+  Default window 1600×900.
   `--selftest N --shot out.png` renders N frames headlessly for validation.
 - `gui/viz_golden` — visual-correctness test (render determinism + golden).
 - `gui/viz_uitest` — UI-framework smoke test (panels/gauge/plot/text → PNG).

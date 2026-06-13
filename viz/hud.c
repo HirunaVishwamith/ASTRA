@@ -34,10 +34,13 @@ struct Hud {
     int  filter;       /* 0 all | 1 active | 2 down */
     int  scroll;       /* first visible asset-list entry */
     int  show_elems;   /* SELECTED ASSET shows orbital elements */
+    int  focus_mode;   /* hide side panels to maximise the viewport */
     /* scratch, recomputed each frame */
     uint8_t deg[ASTRA_MAX_SATS];
     uint8_t gs_link[ASTRA_MAX_SATS];
     float   bw[ASTRA_MAX_SATS];
+    float   gs_bw[ASTRA_MAX_GROUND];   /* aggregate ground-link capacity */
+    uint8_t gs_deg[ASTRA_MAX_GROUND];  /* live sat links per ground stn  */
 };
 
 /* ---- palette -------------------------------------------------------------- */
@@ -85,6 +88,17 @@ void hud_destroy(Hud *h) {
 /* ---- geometry helpers ------------------------------------------------------ */
 static int hit(const HudInput *in, float x, float y, float w, float hgt) {
     return in && in->click && in->cx >= x && in->cx <= x+w && in->cy >= y && in->cy <= y+hgt;
+}
+
+/* hexagon outline centred at (cx,cy), the ground-station marker glyph */
+static void hexagon(UI *u, float cx, float cy, float rad, float t, UIColor c) {
+    float px = 0, py = 0;
+    for (int k = 0; k <= 6; ++k) {
+        float a = (float)k * 1.04719755f;            /* 60 deg steps */
+        float x = cx + rad*cosf(a), y = cy + rad*sinf(a);
+        if (k) ui_line(u, px, py, x, y, t, c);
+        px = x; py = y;
+    }
 }
 
 /* world km (ECI) -> screen px through the frame MVP (axis change matches
@@ -244,12 +258,16 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
     memset(&act, 0, sizeof(act));
     act.select_sat = -1; act.set_route_mode = -1; act.set_cost_mode = -1;
 
+    if (in && in->toggle_focus) h->focus_mode = !h->focus_mode;
+
     /* ---- derived stats ---- */
     uint32_t alive = 0;
     for (uint32_t i = 0; i < snap->sat_count; ++i) alive += snap->sat[i].alive;
     memset(h->deg, 0, snap->sat_count);
     memset(h->gs_link, 0, snap->sat_count);
     memset(h->bw, 0, snap->sat_count*sizeof(float));
+    memset(h->gs_bw, 0, snap->gs_count*sizeof(float));
+    memset(h->gs_deg, 0, snap->gs_count);
     uint32_t up_links = 0;
     for (uint32_t e = 0; e < snap->link_count; ++e) {
         const SnapLink *L = &snap->link[e];
@@ -257,6 +275,9 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
         int ugs = L->u >= snap->sat_count, vgs = L->v >= snap->sat_count;
         if (!ugs && L->u < ASTRA_MAX_SATS) { h->deg[L->u]++; h->bw[L->u]+=L->bw_mbps; if (vgs) h->gs_link[L->u]=1; }
         if (!vgs && L->v < ASTRA_MAX_SATS) { h->deg[L->v]++; h->bw[L->v]+=L->bw_mbps; if (ugs) h->gs_link[L->v]=1; }
+        /* aggregate ground-station capacity (gs index = node id - sat_count) */
+        if (ugs) { uint32_t gi = L->u - snap->sat_count; if (gi < ASTRA_MAX_GROUND) { h->gs_bw[gi]+=L->bw_mbps; h->gs_deg[gi]++; } }
+        if (vgs) { uint32_t gi = L->v - snap->sat_count; if (gi < ASTRA_MAX_GROUND) { h->gs_bw[gi]+=L->bw_mbps; h->gs_deg[gi]++; } }
     }
     uint32_t connected = 0;
     for (uint32_t i = 0; i < snap->sat_count; ++i)
@@ -282,23 +303,43 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
 
     const float TOP = 44.0f, LX = 12.0f, LW = 300.0f;
     const float RW = 320.0f, RX = (float)W - RW - 12.0f;
-    const float VL = LX+LW+12.0f, VR = RX-12.0f;     /* viewport span */
+    /* viewport span: full width in focus mode, between the panels otherwise */
+    const float VL = h->focus_mode ? 12.0f : LX+LW+12.0f;
+    const float VR = h->focus_mode ? (float)W - 12.0f : RX-12.0f;
 
     /* ================= viewport overlays (under the side panels) ============ */
     if (mvp && eye) {
-        /* ground-station labels */
+        /* ground stations: hexagon beacon + uplink/downlink capacity */
         for (uint32_t i = 0; i < snap->gs_count; ++i) {
             float sx, sy;
             if (!project(mvp, snap->gs[i].r, W, Hh, &sx, &sy)) continue;
             if (occluded(eye, snap->gs[i].r)) continue;
-            if (sx < VL+10 || sx > VR-80 || sy < TOP+24 || sy > (float)Hh-60) continue;
-            snprintf(buf, sizeof buf, "%s", snap->gs[i].name);
-            float tw = ui_text_measure(h->f_tiny, buf);
-            ui_circle(u, sx, sy, 2.6f, C_AMBER);
-            ui_line(u, sx+3, sy-3, sx+12, sy-12, 1.0f, ui_rgba(1,0.62f,0.14f,0.7f));
-            ui_rect(u, sx+12, sy-26, tw+12, 16, ui_rgba(0.02f,0.04f,0.07f,0.85f));
-            ui_rect(u, sx+12, sy-26, 1.5f, 16, C_AMBER);
-            ui_text(u, h->f_tiny, sx+18, sy-24, C_WHITE, buf);
+            if (sx < VL+12 || sx > VR-120 || sy < TOP+40 || sy > (float)Hh-60) continue;
+            float   gbw    = h->gs_bw[i];
+            uint8_t glinks = h->gs_deg[i];
+            UIColor hexc   = glinks ? C_AMBER : C_DIM;
+            /* pulsing hexagon glyph (per-station phase) */
+            float beat = 0.5f + 0.5f*sinf((float)snap->sim_time_s*2.2f + (float)i);
+            hexagon(u, sx, sy, 6.5f, 1.6f, hexc);
+            ui_circle(u, sx, sy, 1.4f + 1.8f*beat,
+                      ui_rgba(hexc.r, hexc.g, hexc.b, 0.45f + 0.55f*beat));
+            /* leader to the data card */
+            float bx = sx+13, by = sy-32;
+            ui_line(u, sx+5, sy-5, bx, by+12, 1.0f, ui_rgba(1,0.62f,0.14f,0.7f));
+            char cap[48];
+            if (gbw >= 1000.0f)
+                snprintf(cap, sizeof cap, "UL/DL %.1f Gbps  %u LINK%s",
+                         gbw/1000.0f, glinks, glinks==1?"":"S");
+            else
+                snprintf(cap, sizeof cap, "UL/DL %.0f Mbps  %u LINK%s",
+                         gbw, glinks, glinks==1?"":"S");
+            float w1 = ui_text_measure(h->f_tiny, snap->gs[i].name);
+            float w2 = ui_text_measure(h->f_tiny, cap);
+            float cw = (w1 > w2 ? w1 : w2) + 14.0f;
+            ui_rect(u, bx, by, cw, 30, ui_rgba(0.02f,0.04f,0.07f,0.88f));
+            ui_rect(u, bx, by, 1.5f, 30, C_AMBER);
+            ui_text(u, h->f_tiny, bx+8, by+3,  C_WHITE, snap->gs[i].name);
+            ui_text(u, h->f_tiny, bx+8, by+16, glinks ? C_GREEN : C_DIM, cap);
         }
 
         /* route callout pinned to the middle hop */
@@ -365,8 +406,19 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
         }
         float kx = lx + 6*46.0f + 16.0f;
         ui_circle(u, kx, ly+5, 3.0f, C_RED);    ui_text(u, h->f_tiny, kx+7,  ly-1, C_GREY, "OFFLINE");
-        ui_circle(u, kx+62, ly+5, 3.0f, C_AMBER); ui_text(u, h->f_tiny, kx+69, ly-1, C_GREY, "GROUND STN");
+        hexagon(u, kx+62, ly+5, 4.0f, 1.4f, C_AMBER); ui_text(u, h->f_tiny, kx+71, ly-1, C_GREY, "GROUND STN");
         ui_circle(u, kx+148, ly+5, 3.0f, C_GOLD); ui_text(u, h->f_tiny, kx+155, ly-1, C_GREY, "ACTIVE ROUTE");
+    }
+
+    /* focus-mode toggle: always visible (top-right of the viewport) so the
+     * panels can be brought back even while collapsed */
+    {
+        float fbw = 108.0f, fbx = VR - fbw, fby = TOP + 10.0f;
+        if (button(h, u, in, fbx, fby, fbw, 20,
+                   h->focus_mode ? "SHOW PANELS [F]" : "FOCUS VIEW [F]",
+                   C_CYAN, h->focus_mode)) {
+            h->focus_mode = !h->focus_mode; act.consumed = 1;
+        }
     }
 
     /* ======================= top status bar ================================= */
@@ -404,6 +456,8 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
         ui_text(u, h->f_small, (float)W-cw-40-tw2, 22, C_GREY, t2);
     }
 
+    /* side panels (hidden in focus mode to maximise the 3D viewport) */
+    if (!h->focus_mode) {
     /* ======================= left column ==================================== */
     float list_y = TOP + 12.0f;
     float list_h = ((float)Hh - TOP - 36.0f) * 0.52f;
@@ -655,7 +709,7 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
     ui_text(u, h->f_tiny, RX+12+110, cc, C_GREEN, "LIVE COMMAND");
     cc += 13;
     ui_text(u, h->f_tiny, RX+12, cc, C_DIM,
-            "DRAG ORBIT / WHEEL ZOOM / CLICK SELECT / S STRIKE");
+            "DRAG ORBIT / WHEEL ZOOM / CLICK SELECT / S STRIKE / F FOCUS");
 
     /* -------- ACTIVE ROUTE -------- */
     float rt_y = ctl_y + ctl_h + 10.0f;
@@ -706,10 +760,13 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
             ui_text(u, h->f_tiny, RX+12, rr+38, C_DIM, "Try --range 5000 or REBOOT ALL.");
         }
     }
+    }   /* end side panels */
 
-    /* consume any other click that landed on panel chrome */
+    /* consume any other click that landed on panel chrome (only the top bar
+     * is chrome in focus mode; the side columns are gone) */
     if (in && in->click && !act.consumed) {
-        if (in->cy <= TOP || in->cx <= LX+LW+4 || in->cx >= RX-4) act.consumed = 1;
+        if (in->cy <= TOP) act.consumed = 1;
+        else if (!h->focus_mode && (in->cx <= LX+LW+4 || in->cx >= RX-4)) act.consumed = 1;
     }
     if (out) *out = act;
 }

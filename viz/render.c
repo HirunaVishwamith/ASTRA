@@ -509,7 +509,7 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam, int selec
         glDrawArrays(GL_POINTS, 0, pv);
     }
 
-    /* ---- ground stations ---- */
+    /* ---- ground stations (pulsing amber beacons, distinct from sats) ---- */
     pv = 0;
     for (uint32_t i = 0; i < snap->gs_count; ++i) {
         node_id gid = snap->gs[i].gid; if (gid >= ASTRA_MAX_NODES) continue;
@@ -517,10 +517,17 @@ void render_frame(Renderer *r, const RenderSnapshot *snap, Camera cam, int selec
         p[0]=a.x;p[1]=a.y;p[2]=a.z;p[3]=1.0f;p[4]=0.62f;p[5]=0.14f; pv++;
     }
     if (pv > 0) {
+        float beat = 0.5f + 0.5f*sinf((float)snap->sim_time_s * 2.2f);
         glBindBuffer(GL_ARRAY_BUFFER, r->pt_vbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr_t)((size_t)pv*6u*sizeof(float)), r->pt_buf);
         glUseProgram(r->pt_prog);
-        glUniform1f(r->p_scale, 300.0f);
+        /* expanding additive halo = the "beacon" pulse */
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glUniform1f(r->p_scale, 360.0f + 520.0f*beat);
+        glDrawArrays(GL_POINTS, 0, pv);
+        /* steady solid core on top */
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glUniform1f(r->p_scale, 330.0f);
         glDrawArrays(GL_POINTS, 0, pv);
     }
 

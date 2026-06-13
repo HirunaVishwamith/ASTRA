@@ -7,7 +7,7 @@
  *           (or operate the dashboard: list rows, filter chips, route chips,
  *           speed/pause/strike/reboot buttons), Up/Down or [ ] = walk assets,
  *           P = pause, R = reboot, S = strike selected, M = routing mode,
- *           Q/Esc = quit.
+ *           F = focus mode (collapse side panels), Q/Esc = quit.
  *
  * --selftest N  opens the window, renders N frames, writes a PNG, and exits
  *               (non-interactive validation of the on-screen GL path).
@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
 
         if (snap) {
             /* HUD first: it batches the 2D pass and consumes dashboard clicks */
-            HudInput  hin = { in.click, in.click_x, in.click_y };
+            HudInput  hin = { in.click, in.click_x, in.click_y, in.toggle_focus };
             HudActions act;
             ui_begin(ui, w, h);
             hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv,

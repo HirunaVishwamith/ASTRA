@@ -17,6 +17,7 @@ typedef struct Hud Hud;
 typedef struct {
     int   click;        /* left click this frame            */
     float cx, cy;       /* click position, top-left origin  */
+    int   toggle_focus; /* F pressed: collapse/expand panels */
 } HudInput;
 
 typedef struct {
