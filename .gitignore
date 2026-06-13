@@ -9,3 +9,17 @@ venv/
 .env.*
 .idea/
 .vscode/
+
+# C build artifacts
+build/
+*.o
+
+# Generated run outputs (profiles, ad-hoc renders, golden diff dumps)
+profiles/
+/astra_frame.png
+/astra_gui.png
+tests/golden/_actual.png
+*.png
+
+# Vendored third-party libs
+third_party/

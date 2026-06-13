@@ -1,0 +1,12 @@
+{
+  "sats": 100, "ground": 5, "range_km": 5000, "steps": 600,
+  "dt_s": 5.0, "blackout_per_s": 0.0000, "strikes": 2,
+  "mean_delivery_ratio": 0.9080,
+  "min_delivery_ratio": 0.0000,
+  "max_avg_delay_s": 15.0979,
+  "max_links": 654,
+  "convergence_events": 0,
+  "worst_convergence_s": -1.00,
+  "total_generated": 9000,
+  "total_delivered": 8137
+}
