@@ -42,7 +42,7 @@ Makefile            — build everything (no cmake)
 |---|---|
 | `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation |
 | `graph` | `NetworkGraph`, links, inverse-square link budget, ISL topology (O(N²)), CSR build, O(1) adjacency |
-| `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. |
+| `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. Surfaced live on the HUD ACTIVE ROUTE panel and aggregated by `apps/astra_capacity`. |
 | `routing` | `Router`: Dijkstra (lazy (dist,node) heap) + Distance-Vector (sync Bellman-Ford); all-pairs next-hop table |
 | `ground` | Ground stations, elevation-masked ground↔sat links |
 | `failures` | Probabilistic link blackout / latency spike / loss multiplier (PCG32 RNG) |
@@ -198,6 +198,7 @@ Quick looks:
 ./build/astra_dataset --strike 200:42 --reboot 400 --csv out.csv --json out.json
 ./build/astra_linkbudget                        # RF/optical link-budget datasheet
 ./build/astra_linkbudget --range 1200           # detailed budget at one range
+./build/astra_capacity --range 5000             # capacity/coverage/$ per Gbps KPI report
 ./build/astra_render --range 5000 --out frame.png
 ./build/astra_gui --range 5000                  # interactive (needs a display)
 ```
