@@ -13,7 +13,7 @@ It combines:
 - **Failure/impairment** hooks (blackouts, latency spikes, loss scaling) + node strikes
 - A lock-free **sim↔render** boundary and a **GLX/EGL** 3D viewer
 
-![ASTRA C render](img/c_render_sample.png)
+![ASTRA C render](img/c_dashboard.png)
 
 > ASTRA started as a Python + PyQt6 prototype. It was ported to C, verified
 > numerically against the Python (machine-precision parity on orbits, bit-exact
