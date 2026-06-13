@@ -68,7 +68,7 @@ static fv3 cam_eye(Camera cam) {
 }
 
 int main(int argc, char **argv) {
-    int W = 1600, H = 900, selftest = 0, j2 = 0;
+    int W = 1920, H = 1080, selftest = 0, j2 = 0;
     double range = 5000.0;
     uint64_t seed = 0xA57121u;
     const char *shot = "astra_gui.png";

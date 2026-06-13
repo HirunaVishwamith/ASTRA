@@ -43,6 +43,7 @@ Makefile            — build everything (no cmake)
 | `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation, secular **J2 node rate** |
 | `graph` | `NetworkGraph`, links, inverse-square link budget, ISL topology (O(N²)), CSR build, O(1) adjacency |
 | `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. Surfaced live on the HUD ACTIVE ROUTE panel and aggregated by `apps/astra_capacity`. |
+| `sla` | **Service tiers + user-terminal demand + priority SLA scheduler** (additive analysis): tiers (CIR/burst/priority/price), busy-hour offered load, strict-priority allocation of deliverable capacity → SLA attainment, oversubscription, revenue, revenue-at-risk. Driven by `apps/astra_sla`. |
 | `routing` | `Router`: Dijkstra (lazy (dist,node) heap) + Distance-Vector (sync Bellman-Ford); all-pairs next-hop table |
 | `ground` | Ground stations, elevation-masked ground↔sat links |
 | `failures` | Probabilistic link blackout / latency spike / loss multiplier (PCG32 RNG) |
@@ -184,7 +185,7 @@ No cmake. Requires: gcc/clang (C11), `-pthread`, `-lm`; for viz also
 
 ```
 make            # core library + headless apps
-make test       # build & run the 11 C verification tests (Python-free)
+make test       # build & run the 12 C verification tests (Python-free)
 make apps       # headless profilers/dataset tools
 make gui        # viz executables (needs GL/EGL/X11/libpng)
 make viz-test   # visual-correctness golden-image test (needs GL)
@@ -199,6 +200,7 @@ Quick looks:
 ./build/astra_linkbudget                        # RF/optical link-budget datasheet
 ./build/astra_linkbudget --range 1200           # detailed budget at one range
 ./build/astra_capacity --range 5000             # capacity/coverage/$ per Gbps KPI report
+./build/astra_sla --range 5000 --gateways 150   # service-tier SLA / demand / revenue-at-risk
 ./build/astra_render --range 5000 --out frame.png
 ./build/astra_gui --range 5000                  # interactive (needs a display)
 ./build/astra_gui --range 5000 --j2             # + J2 nodal precession (planes drift)
@@ -239,6 +241,10 @@ Quick looks:
   `apps/astra_linkbudget` (`make apps`) as an additive analysis layer; next is
   feeding its achievable Gbps into the topology budget + HUD route panel
   (currently the hot path still uses the parity-locked inverse-square heuristic).
+- Commercial layer: **service-tier SLA + demand modeling landed** (`src/sla.c` +
+  `apps/astra_sla`; priority scheduler, attainment, oversubscription,
+  revenue-at-risk). Next: surface SLA/revenue on the HUD; per-region demand
+  geography; couple served capacity back into the traffic generator.
 - Ground-to-ground file transfer with live throughput + bottleneck highlight.
 - HUD polish: typed search in the asset list (needs key-event plumbing in
   glctx), hover states, route endpoint picker; vendor GLFW only if a
