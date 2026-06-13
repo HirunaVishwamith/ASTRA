@@ -13,6 +13,7 @@
  */
 #include "hud.h"
 #include "astra/orbit.h"
+#include "astra/rf.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -235,6 +236,15 @@ static void gs_code(const RenderSnapshot *snap, node_id gid, char *out) {
         }
     }
     out[n] = 0;
+}
+
+/* slant range (km) of the snapshot link between u and v, or -1 if none */
+static float snap_link_dist(const RenderSnapshot *snap, node_id u, node_id v) {
+    for (uint32_t e = 0; e < snap->link_count; ++e) {
+        const SnapLink *L = &snap->link[e];
+        if ((L->u==u && L->v==v) || (L->u==v && L->v==u)) return L->dist_km;
+    }
+    return -1.0f;
 }
 
 static void node_label(const RenderSnapshot *snap, node_id id, char *buf, size_t n) {
@@ -727,6 +737,46 @@ void hud_draw(Hud *h, UI *u, const RenderSnapshot *snap, int W, int Hh,
                      (unsigned)(snap->route.count*7u%997u), rt->total_ms, rt->min_bw_mbps);
             ui_text(u, h->f_tiny, RX+12, rr-4, C_GREY, buf);
             rr += 12;
+
+            /* physical link budget of the route's binding hop: sat-sat hops are
+             * optical (laser ISL), sat-ground hops are Ka RF. The hop with the
+             * lowest achievable rate sets the route's real capacity ceiling. */
+            {
+                double bn_gbps = 1e30, bn_margin = 0; float bn_range = 0;
+                char   bn_detail[28] = ""; int bn_found = 0;
+                for (uint32_t kk = 0; kk + 1 < rt->count; ++kk) {
+                    node_id a = rt->node[kk], b = rt->node[kk+1];
+                    float d = snap_link_dist(snap, a, b);
+                    if (d < 0.0f) continue;
+                    int ground = (a >= snap->sat_count) || (b >= snap->sat_count);
+                    double gbps, margin; char det[28];
+                    if (ground) {
+                        RfLink r = astra_rf_budget(&ASTRA_RF_KA_GW_UP, d);
+                        gbps = r.rate_gbps; margin = r.margin_db;
+                        snprintf(det, sizeof det, "Ka %s", r.modcod);
+                    } else {
+                        OpticalLink o = astra_optical_budget(&ASTRA_OPTICAL_ISL, d);
+                        gbps = o.rate_gbps; margin = o.margin_db;
+                        snprintf(det, sizeof det, "OPTICAL ISL");
+                    }
+                    if (gbps < bn_gbps || (gbps == bn_gbps && margin < bn_margin)) {
+                        bn_gbps = gbps; bn_margin = margin; bn_range = d; bn_found = 1;
+                        snprintf(bn_detail, sizeof bn_detail, "%s", det);
+                    }
+                }
+                if (bn_found) {
+                    UIColor mc = bn_gbps <= 0.0 ? C_RED : (bn_margin < 3.0 ? C_AMBER : C_GREEN);
+                    if (bn_gbps <= 0.0)
+                        snprintf(buf, sizeof buf, "RF CAP  OUTAGE  %s @ %.0f km  %+.1f dB",
+                                 bn_detail, bn_range, bn_margin);
+                    else
+                        snprintf(buf, sizeof buf, "RF CAP %.2f Gbps  %s  M%+.1f dB",
+                                 bn_gbps, bn_detail, bn_margin);
+                    ui_text(u, h->f_tiny, RX+12, rr-4, mc, buf);
+                    rr += 13;
+                }
+            }
+
             int maxrows = (int)((rt_y + rt_h - 64 - rr) / 17.0f);
             int nshow = (int)rt->count; int skipped = 0;
             if (nshow > maxrows) { skipped = nshow - maxrows; nshow = maxrows; }
