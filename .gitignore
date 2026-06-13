@@ -19,7 +19,7 @@ profiles/
 /astra_frame.png
 /astra_gui.png
 tests/golden/_actual.png
-*.png
+# *.png
 
 # Vendored third-party libs
 third_party/
