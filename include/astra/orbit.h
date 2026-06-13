@@ -25,6 +25,12 @@ OrbitElements astra_rv_to_coe(double mu, vec3 r, vec3 v);
 /* Two-body universal-variable propagation (Stumpff C/S, Newton iteration). */
 StateRV astra_propagate_kepler(double mu, vec3 r0, vec3 v0, double dt_s);
 
+/* Secular J2 nodal-regression rate (rad/s): the rate the orbital plane's RAAN
+ * drifts due to Earth oblateness. Negative for prograde orbits (i < 90 deg).
+ * J2 secular theory leaves a, e, i unchanged, so this rate is constant for a
+ * given orbit and a pure rotation about the ECI z-axis realises the effect. */
+double astra_j2_node_rate(double mu, double body_r_km, double a, double e, double i_rad);
+
 /* ECI <-> ECEF simple R3 rotation by theta0 + omega_earth * t. */
 vec3 astra_eci_to_ecef(vec3 r_eci, double t_since_epoch_s, double theta0_rad);
 vec3 astra_ecef_to_eci(vec3 r_ecef, double t_since_epoch_s, double theta0_rad);

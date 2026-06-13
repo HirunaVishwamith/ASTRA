@@ -27,6 +27,7 @@
 #define ASTRA_EARTH_RADIUS_KM   6378.137
 #define ASTRA_MU_EARTH          398600.4418        /* km^3/s^2               */
 #define ASTRA_OMEGA_EARTH       7.2921150e-5       /* rad/s, WGS-84          */
+#define ASTRA_J2                1.08262668e-3      /* Earth oblateness (J2)  */
 #define ASTRA_C_LIGHT_KMS       299792.458         /* km/s                   */
 #define ASTRA_LEO_ALTITUDE_KM   550.0
 #define ASTRA_SAT_SMA_KM        (ASTRA_EARTH_RADIUS_KM + ASTRA_LEO_ALTITUDE_KM)

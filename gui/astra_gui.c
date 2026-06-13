@@ -68,7 +68,7 @@ static fv3 cam_eye(Camera cam) {
 }
 
 int main(int argc, char **argv) {
-    int W = 1600, H = 900, selftest = 0;
+    int W = 1920, H = 1080, selftest = 0, j2 = 0;
     double range = 5000.0;
     uint64_t seed = 0xA57121u;
     const char *shot = "astra_gui.png";
@@ -78,10 +78,12 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i],"--w")        && i+1<argc) W = atoi(argv[++i]);
         else if (!strcmp(argv[i],"--h")        && i+1<argc) H = atoi(argv[++i]);
         else if (!strcmp(argv[i],"--shot")     && i+1<argc) shot = argv[++i];
+        else if (!strcmp(argv[i],"--j2"))                   j2 = 1;
         else { fprintf(stderr,"unknown arg %s\n", argv[i]); return 2; }
     }
 
     astra_sim_init_cfg(&SIM, seed, ASTRA_NUM_PLANES, ASTRA_NUM_SATS_PER_PLANE, range);
+    SIM.j2_enabled = j2;   /* opt-in J2 nodal precession (planes regress ~5 deg/day) */
 
     GLCtx *c = glctx_glx_create(W, H, "ASTRA — Mission Control");
     if (!c || !glctx_load_gl(c)) { fprintf(stderr, "GL window init failed\n"); return 1; }
@@ -135,7 +137,7 @@ int main(int argc, char **argv) {
 
         if (snap) {
             /* HUD first: it batches the 2D pass and consumes dashboard clicks */
-            HudInput  hin = { in.click, in.click_x, in.click_y, in.toggle_focus };
+            HudInput  hin = { in.click, in.click_x, in.click_y, in.toggle_focus, in.toggle_help };
             HudActions act;
             ui_begin(ui, w, h);
             hud_draw(hud, ui, snap, w, h, selected, SIM.paused, route_dv,

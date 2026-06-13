@@ -18,6 +18,7 @@ typedef struct {
     int   click;        /* left click this frame            */
     float cx, cy;       /* click position, top-left origin  */
     int   toggle_focus; /* F pressed: collapse/expand panels */
+    int   toggle_help;  /* H pressed: show/hide controls overlay */
 } HudInput;
 
 typedef struct {

@@ -22,6 +22,7 @@ typedef struct {
     int   strike;      /* S pressed: strike the selected satellite         */
     int   route_mode;  /* M pressed: toggle Dijkstra/Distance-Vector       */
     int   toggle_focus;/* F pressed: collapse/expand the side panels       */
+    int   toggle_help; /* H pressed: show/hide the controls overlay        */
     int   sel_next, sel_prev;  /* Down/Up or ]/[ : move selection          */
     int   click;       /* left-click (no drag): pick at click_x/click_y    */
     float click_x, click_y;

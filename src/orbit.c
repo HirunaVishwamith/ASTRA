@@ -6,6 +6,14 @@
 #include "astra/config.h"
 #include <math.h>
 
+double astra_j2_node_rate(double mu, double body_r_km, double a, double e, double i_rad) {
+    if (a <= 0.0) return 0.0;
+    double n  = sqrt(mu / (a*a*a));        /* mean motion (rad/s)        */
+    double p  = a * (1.0 - e*e);           /* semi-latus rectum (km)     */
+    double rp = body_r_km / p;
+    return -1.5 * n * ASTRA_J2 * rp*rp * cos(i_rad);
+}
+
 /* ---- Stumpff functions -------------------------------------------------- */
 static double stumpff_C(double z) {
     if (z > 0.0) { double sz = sqrt(z);  return (1.0 - cos(sz)) / z; }

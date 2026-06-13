@@ -40,8 +40,10 @@ Makefile            — build everything (no cmake)
 
 | Module | Responsibility |
 |---|---|
-| `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation |
+| `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation, secular **J2 node rate** |
 | `graph` | `NetworkGraph`, links, inverse-square link budget, ISL topology (O(N²)), CSR build, O(1) adjacency |
+| `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. Surfaced live on the HUD ACTIVE ROUTE panel and aggregated by `apps/astra_capacity`. |
+| `sla` | **Service tiers + user-terminal demand + priority SLA scheduler** (additive analysis): tiers (CIR/burst/priority/price), busy-hour offered load, strict-priority allocation of deliverable capacity → SLA attainment, oversubscription, revenue, revenue-at-risk. Driven by `apps/astra_sla`. |
 | `routing` | `Router`: Dijkstra (lazy (dist,node) heap) + Distance-Vector (sync Bellman-Ford); all-pairs next-hop table |
 | `ground` | Ground stations, elevation-masked ground↔sat links |
 | `failures` | Probabilistic link blackout / latency spike / loss multiplier (PCG32 RNG) |
@@ -78,7 +80,8 @@ tolerance. **`make test` needs no Python.** Results at parity time:
 
 - orbit: pos err 3e-12 km · graph/topology: 5e-13 km · Dijkstra next-hop:
   bit-exact over 30k pairs · DV→Dijkstra cost: 4e-17 · ground links: exact.
-- failures/traffic/metrics: invariant-verified (conservation, reproducibility).
+- failures/traffic/metrics/rf: invariant-verified (conservation, reproducibility;
+  rf checks FSPL scaling, C/N consistency, Shannon bound, modcod closure/outage).
 - Routing weights/latency are **double** (not float32) so paths match Python
   float64 bit-exactly.
 
@@ -118,7 +121,8 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   depth off. ASCII 32–127 only — no `—`/`→`/`·` in HUD strings.
 - `viz/hud.{c,h}` — the **mission-control console** drawn over the 3D scene
   from a `RenderSnapshot` (layout mirrors `realistic_interface.png`): top
-  status bar (TOTAL OBJECTS / COVERAGE / ACTIVE NETWORK + clock), GLOBAL ASSET
+  status bar (TOTAL OBJECTS / COVERAGE / ACTIVE NETWORK / NETWORK CAPACITY in
+  Tbps, RF-priced live + clock), a controls overlay (H), GLOBAL ASSET
   LIST (filter chips + clickable rows), SELECTED ASSET (live altitude /
   velocity / inclination / geodetic lat-lon, network role, aggregate BW, link
   signal, **VIEW ORBITAL ELEMENTS** toggle computing osculating COEs from r,v),
@@ -140,8 +144,11 @@ the dev env); on Linux GLFW just wraps GLX/EGL, which we use directly:
   Controls: drag = orbit, wheel = zoom, **left-click = select satellite or
   operate any dashboard control**, Up/Down (or `[` `]`) = walk the asset list,
   **S** = strike selected, **R** = reboot, **P** = pause, **M** = toggle
-  routing, **F** = focus mode (collapse side panels), **Q/Esc** = quit.
-  Default window 1600×900.
+  routing, **F** = focus mode (collapse side panels), **H** = controls overlay,
+  **Q/Esc** = quit. Default window 1920×900. The GLX backend requests an
+  **8x→4x→none MSAA** framebuffer (`glEnable(GL_MULTISAMPLE)`) so the globe limb,
+  ISL lines, and markers are anti-aliased; the EGL golden path stays
+  single-sample so `viz-test` is unaffected.
   `--selftest N --shot out.png` renders N frames headlessly for validation.
 - `gui/viz_golden` — visual-correctness test (render determinism + golden).
 - `gui/viz_uitest` — UI-framework smoke test (panels/gauge/plot/text → PNG).
@@ -182,7 +189,7 @@ No cmake. Requires: gcc/clang (C11), `-pthread`, `-lm`; for viz also
 
 ```
 make            # core library + headless apps
-make test       # build & run the 9 C verification tests (Python-free)
+make test       # build & run the 12 C verification tests (Python-free)
 make apps       # headless profilers/dataset tools
 make gui        # viz executables (needs GL/EGL/X11/libpng)
 make viz-test   # visual-correctness golden-image test (needs GL)
@@ -194,8 +201,13 @@ Quick looks:
 ./build/astra_profile --steps 2000              # perf + per-stage breakdown
 ./build/astra_profile --sweep                   # 100..1024-sat scaling
 ./build/astra_dataset --strike 200:42 --reboot 400 --csv out.csv --json out.json
+./build/astra_linkbudget                        # RF/optical link-budget datasheet
+./build/astra_linkbudget --range 1200           # detailed budget at one range
+./build/astra_capacity --range 5000             # capacity/coverage/$ per Gbps KPI report
+./build/astra_sla --range 5000 --gateways 150   # service-tier SLA / demand / revenue-at-risk
 ./build/astra_render --range 5000 --out frame.png
 ./build/astra_gui --range 5000                  # interactive (needs a display)
+./build/astra_gui --range 5000 --j2             # + J2 nodal precession (planes drift)
 ```
 
 ---
@@ -225,8 +237,18 @@ Quick looks:
 ## Roadmap (next)
 
 - SGP4/TLE physical-accuracy study (when networked): quantify two-body vs real.
-- Physics realism: J2 nodal precession, drag, WGS-84 geodetic, GMST, 2nd shell.
-- RF link budget (Friis/Shannon) replacing the inverse-square heuristic.
+- Physics realism: **J2 nodal precession landed** as an opt-in (`SIM.j2_enabled`
+  / `--j2`; ~-4.5 deg/day for the 550 km/53 deg shell, verified by `test_j2`;
+  default off so two-body parity + the golden stay bit-exact). Remaining: drag,
+  apsidal (argp) + mean-anomaly secular terms, WGS-84 geodetic, GMST, 2nd shell.
+- RF link budget (Friis/Shannon): engine landed in `src/rf.c` +
+  `apps/astra_linkbudget` (`make apps`) as an additive analysis layer; next is
+  feeding its achievable Gbps into the topology budget + HUD route panel
+  (currently the hot path still uses the parity-locked inverse-square heuristic).
+- Commercial layer: **service-tier SLA + demand modeling landed** (`src/sla.c` +
+  `apps/astra_sla`; priority scheduler, attainment, oversubscription,
+  revenue-at-risk). Next: surface SLA/revenue on the HUD; per-region demand
+  geography; couple served capacity back into the traffic generator.
 - Ground-to-ground file transfer with live throughput + bottleneck highlight.
 - HUD polish: typed search in the asset list (needs key-event plumbing in
   glctx), hover states, route endpoint picker; vendor GLFW only if a
