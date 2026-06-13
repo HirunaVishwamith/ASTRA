@@ -30,16 +30,19 @@ int main(int argc, char **argv) {
     uint32_t steps = 1200, planes = ASTRA_NUM_PLANES, per = ASTRA_NUM_SATS_PER_PLANE;
     double range = 0.0;
     uint64_t seed = 0xA57121u;
+    int j2 = 0;
     for (int i = 1; i < argc; ++i) {
         if      (!strcmp(argv[i], "--steps")  && i+1 < argc) steps  = (uint32_t)strtoul(argv[++i],0,10);
         else if (!strcmp(argv[i], "--planes") && i+1 < argc) planes = (uint32_t)strtoul(argv[++i],0,10);
         else if (!strcmp(argv[i], "--per")    && i+1 < argc) per    = (uint32_t)strtoul(argv[++i],0,10);
         else if (!strcmp(argv[i], "--range")  && i+1 < argc) range  = strtod(argv[++i],0);
         else if (!strcmp(argv[i], "--seed")   && i+1 < argc) seed   = strtoull(argv[++i],0,0);
+        else if (!strcmp(argv[i], "--j2"))                   j2 = 1;
         else { fprintf(stderr, "unknown arg: %s\n", argv[i]); return 2; }
     }
 
     astra_sim_init_cfg(&SIM, seed, planes, per, range);
+    SIM.j2_enabled = j2;
 
     /* steady-state accumulators (averaged over the second half of the run) */
     double sum_isl_gbps = 0, sum_gnd_gbps = 0;

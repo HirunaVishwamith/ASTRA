@@ -14,6 +14,8 @@ const char *const astra_prof_stage_name[PF_NSTAGES] = {
     "failures", "csr", "routing", "traffic", "metrics"
 };
 
+static void j2_precess_z(StateRV *st, double ang);   /* fwd decl (see below) */
+
 /* Monotonic nanosecond clock for stage timing. */
 static inline uint64_t astra_now_ns(void) {
     struct timespec ts;
@@ -57,6 +59,11 @@ void astra_sim_init_cfg(SimState *s, uint64_t seed, uint32_t planes,
             f->plane[id] = (uint16_t)pl;
             f->slot[id]  = (uint16_t)sl;
         }
+    /* precompute per-sat secular J2 nodal-regression rates (applied only when
+     * s->j2_enabled is set; default off so the two-body path stays bit-exact) */
+    for (uint32_t i = 0; i < s->num_sats; ++i)
+        s->j2_node_rate[i] = astra_j2_node_rate(s->mu, s->earth_r,
+                                f->coe0[i].a, f->coe0[i].e, f->coe0[i].i);
 
     /* ground stations: gid = num_sats + i */
     s->ngs = astra_default_ground_stations(s->gs, s->num_sats);
@@ -103,6 +110,8 @@ static void apply_command(SimState *s, Command c) {
                 /* re-sync revived sat to current epoch from initial elements */
                 StateRV st0 = astra_coe_to_rv(s->mu, s->field.coe0[i]);
                 s->field.state[i] = astra_propagate_kepler(s->mu, st0.r, st0.v, s->sim_time_s);
+                if (s->j2_enabled && s->j2_node_rate[i] != 0.0)
+                    j2_precess_z(&s->field.state[i], s->j2_node_rate[i] * s->sim_time_s);
                 s->field.alive[i] = 1;
             }
         }
@@ -222,6 +231,16 @@ const RenderSnapshot *astra_snapshot_acquire(SimState *s) {
 #define STAGE(id) do { if (prof) { uint64_t _t = astra_now_ns(); \
     s->prof.ns[_stage] += _t - _mark; _mark = _t; _stage = (id); } } while (0)
 
+/* Rotate a state's position and velocity about the ECI z-axis by `ang` rad —
+ * the secular J2 nodal-regression of the orbital plane over the step. */
+static void j2_precess_z(StateRV *st, double ang) {
+    double ca = cos(ang), sa = sin(ang);
+    double rx = st->r.x, ry = st->r.y;
+    double vx = st->v.x, vy = st->v.y;
+    st->r.x = rx*ca - ry*sa;  st->r.y = rx*sa + ry*ca;
+    st->v.x = vx*ca - vy*sa;  st->v.y = vx*sa + vy*ca;
+}
+
 static void advance(SimState *s) {
     SatField *f = &s->field;
     double dt = s->sim_dt_s;
@@ -229,10 +248,12 @@ static void advance(SimState *s) {
     uint64_t _mark = prof ? astra_now_ns() : 0;
     ProfStage _stage = PF_PROPAGATE;
 
-    /* 1) physics: propagate alive sats */
+    /* 1) physics: propagate alive sats (+ optional J2 nodal precession) */
     for (uint32_t i = 0; i < s->num_sats; ++i) {
         if (!f->alive[i]) continue;
         f->state[i] = astra_propagate_kepler(s->mu, f->state[i].r, f->state[i].v, dt);
+        if (s->j2_enabled && s->j2_node_rate[i] != 0.0)
+            j2_precess_z(&f->state[i], s->j2_node_rate[i] * dt);
     }
     STAGE(PF_ACTIVE);
 

@@ -105,6 +105,10 @@ typedef struct {
     CostMode  cost;
     StepMetrics last_metrics;
 
+    /* ---- optional J2 nodal precession (opt-in; off keeps two-body parity) -- */
+    int       j2_enabled;
+    double    j2_node_rate[ASTRA_MAX_SATS];   /* per-sat RAAN drift (rad/s) */
+
     /* ---- publish channel: triple buffer + atomic index ---- */
     RenderSnapshot   snap[3];
     _Atomic uint32_t tb_shared;     /* mid index (bits0-1) | dirty (bit2) */

@@ -40,7 +40,7 @@ Makefile            — build everything (no cmake)
 
 | Module | Responsibility |
 |---|---|
-| `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation |
+| `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation, secular **J2 node rate** |
 | `graph` | `NetworkGraph`, links, inverse-square link budget, ISL topology (O(N²)), CSR build, O(1) adjacency |
 | `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. Surfaced live on the HUD ACTIVE ROUTE panel and aggregated by `apps/astra_capacity`. |
 | `routing` | `Router`: Dijkstra (lazy (dist,node) heap) + Distance-Vector (sync Bellman-Ford); all-pairs next-hop table |
@@ -184,7 +184,7 @@ No cmake. Requires: gcc/clang (C11), `-pthread`, `-lm`; for viz also
 
 ```
 make            # core library + headless apps
-make test       # build & run the 10 C verification tests (Python-free)
+make test       # build & run the 11 C verification tests (Python-free)
 make apps       # headless profilers/dataset tools
 make gui        # viz executables (needs GL/EGL/X11/libpng)
 make viz-test   # visual-correctness golden-image test (needs GL)
@@ -201,6 +201,7 @@ Quick looks:
 ./build/astra_capacity --range 5000             # capacity/coverage/$ per Gbps KPI report
 ./build/astra_render --range 5000 --out frame.png
 ./build/astra_gui --range 5000                  # interactive (needs a display)
+./build/astra_gui --range 5000 --j2             # + J2 nodal precession (planes drift)
 ```
 
 ---
@@ -230,7 +231,10 @@ Quick looks:
 ## Roadmap (next)
 
 - SGP4/TLE physical-accuracy study (when networked): quantify two-body vs real.
-- Physics realism: J2 nodal precession, drag, WGS-84 geodetic, GMST, 2nd shell.
+- Physics realism: **J2 nodal precession landed** as an opt-in (`SIM.j2_enabled`
+  / `--j2`; ~-4.5 deg/day for the 550 km/53 deg shell, verified by `test_j2`;
+  default off so two-body parity + the golden stay bit-exact). Remaining: drag,
+  apsidal (argp) + mean-anomaly secular terms, WGS-84 geodetic, GMST, 2nd shell.
 - RF link budget (Friis/Shannon): engine landed in `src/rf.c` +
   `apps/astra_linkbudget` (`make apps`) as an additive analysis layer; next is
   feeding its achievable Gbps into the topology budget + HUD route panel
