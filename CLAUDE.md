@@ -42,6 +42,7 @@ Makefile            — build everything (no cmake)
 |---|---|
 | `orbit` | Two-body Kepler (universal variables / Stumpff), COE↔RV, ECI/ECEF, geodetic, LOS, elevation |
 | `graph` | `NetworkGraph`, links, inverse-square link budget, ISL topology (O(N²)), CSR build, O(1) adjacency |
+| `rf` | **Physical link-budget engine** (additive, off the parity path): Friis FSPL + kTB noise + Shannon-Hartley + DVB-S2 modcod selection → real C/N, Eb/N0, achievable Gbps, link margin. RF presets (Ku user / Ka gateway) + optical laser-ISL budget. |
 | `routing` | `Router`: Dijkstra (lazy (dist,node) heap) + Distance-Vector (sync Bellman-Ford); all-pairs next-hop table |
 | `ground` | Ground stations, elevation-masked ground↔sat links |
 | `failures` | Probabilistic link blackout / latency spike / loss multiplier (PCG32 RNG) |
@@ -78,7 +79,8 @@ tolerance. **`make test` needs no Python.** Results at parity time:
 
 - orbit: pos err 3e-12 km · graph/topology: 5e-13 km · Dijkstra next-hop:
   bit-exact over 30k pairs · DV→Dijkstra cost: 4e-17 · ground links: exact.
-- failures/traffic/metrics: invariant-verified (conservation, reproducibility).
+- failures/traffic/metrics/rf: invariant-verified (conservation, reproducibility;
+  rf checks FSPL scaling, C/N consistency, Shannon bound, modcod closure/outage).
 - Routing weights/latency are **double** (not float32) so paths match Python
   float64 bit-exactly.
 
@@ -182,7 +184,7 @@ No cmake. Requires: gcc/clang (C11), `-pthread`, `-lm`; for viz also
 
 ```
 make            # core library + headless apps
-make test       # build & run the 9 C verification tests (Python-free)
+make test       # build & run the 10 C verification tests (Python-free)
 make apps       # headless profilers/dataset tools
 make gui        # viz executables (needs GL/EGL/X11/libpng)
 make viz-test   # visual-correctness golden-image test (needs GL)
@@ -194,6 +196,8 @@ Quick looks:
 ./build/astra_profile --steps 2000              # perf + per-stage breakdown
 ./build/astra_profile --sweep                   # 100..1024-sat scaling
 ./build/astra_dataset --strike 200:42 --reboot 400 --csv out.csv --json out.json
+./build/astra_linkbudget                        # RF/optical link-budget datasheet
+./build/astra_linkbudget --range 1200           # detailed budget at one range
 ./build/astra_render --range 5000 --out frame.png
 ./build/astra_gui --range 5000                  # interactive (needs a display)
 ```
@@ -226,7 +230,10 @@ Quick looks:
 
 - SGP4/TLE physical-accuracy study (when networked): quantify two-body vs real.
 - Physics realism: J2 nodal precession, drag, WGS-84 geodetic, GMST, 2nd shell.
-- RF link budget (Friis/Shannon) replacing the inverse-square heuristic.
+- RF link budget (Friis/Shannon): engine landed in `src/rf.c` +
+  `apps/astra_linkbudget` (`make apps`) as an additive analysis layer; next is
+  feeding its achievable Gbps into the topology budget + HUD route panel
+  (currently the hot path still uses the parity-locked inverse-square heuristic).
 - Ground-to-ground file transfer with live throughput + bottleneck highlight.
 - HUD polish: typed search in the asset list (needs key-event plumbing in
   glctx), hover states, route endpoint picker; vendor GLFW only if a
